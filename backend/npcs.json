@@ -1,0 +1,43 @@
+{
+  "start_trust": 10,
+  "items": {
+    "apple": "default:apple",
+    "iron": "default:steel_ingot",
+    "coal": "default:coal_lump",
+    "wheat": "farming:wheat",
+    "bread": "farming:bread",
+    "flower": "flowers:rose",
+    "gold_apple": "default:gold_ingot",
+    "pickaxe": "default:pick_steel"
+  },
+  "deltas": {
+    "theft": -30, "vandalism": -40, "hit_npc": -25, "threat": -15, "insult": -10,
+    "gift_loved": 20, "gift_liked": 10, "gift_neutral": 5, "gift_disliked": -5,
+    "apology": 10, "promise_kept": 15, "promise_broken": -20, "repair": 15,
+    "quest_done": 20, "quest_failed": -10, "correction_confirmed": 5, "trade": 2
+  },
+  "npcs": {
+    "elise": {
+      "name": "Elise", "role": "Merchant",
+      "persona": "Friendly but cautious; values honesty and fair dealing.",
+      "background": "Runs the fruit stall; came to the village after a bad partner cheated her.",
+      "loves": ["gold_apple"], "likes": ["flower", "bread"], "dislikes": ["coal"],
+      "trade": {"give": "apple", "count": 3, "cost": "iron", "base_price": 1}
+    },
+    "rowan": {
+      "name": "Rowan", "role": "Blacksmith",
+      "persona": "Blunt, practical, proud of his craft; respects reliability.",
+      "background": "Third-generation smith; the anvil was his grandmother's.",
+      "loves": ["iron"], "likes": ["coal"], "dislikes": ["flower"],
+      "trade": {"give": "pickaxe", "count": 1, "cost": "iron", "base_price": 3},
+      "work_block": "cottages:anvil"
+    },
+    "mira": {
+      "name": "Mira", "role": "Innkeeper",
+      "persona": "Sociable and observant; loves news, careful to say where she heard it.",
+      "background": "Runs the inn; hears everything that happens in the village.",
+      "loves": ["flower"], "likes": ["bread", "apple"], "dislikes": [],
+      "trade": {"give": "bread", "count": 2, "cost": "apple", "base_price": 2}
+    }
+  }
+}

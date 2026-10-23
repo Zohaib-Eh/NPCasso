@@ -1,0 +1,6 @@
+.superpowers/
+.env
+.venv/
+*.db
+__pycache__/
+eval/results/
