@@ -188,9 +188,10 @@ core.register_entity("npcasso:npc", {
 			local d = vector.subtract(self.target, pos)
 			d.y = 0
 			if vector.length(d) < 0.4 or (self.walked or 0) > 8 then
-				stop(self)
-				if vector.distance(self.target, self.home) < 0.5 then self.object:set_yaw(self.post_yaw) end
-				self.target, self.rest = nil, math.random(4, 10)
+				local at_home = vector.distance(self.target, self.home) < 0.5
+				stop(self)  -- clears self.target
+				if at_home then self.object:set_yaw(self.post_yaw) end
+				self.rest = math.random(4, 10)
 			else
 				local v = vector.multiply(vector.normalize(d), WALK_SPEED)
 				self.object:set_velocity({x = v.x, y = self.object:get_velocity().y, z = v.z})
