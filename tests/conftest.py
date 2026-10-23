@@ -13,3 +13,17 @@ def conn(db_path):
     c = db.connect(db_path)
     yield c
     c.close()
+
+
+class ScriptedLLM:
+    """Returns the given outputs in order; None simulates an LLM error."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def complete(self, task, user, thread_id):
+        from backend.llm import LLMResult
+        self.calls.append((task, user))
+        data = self.responses.pop(0)
+        return LLMResult(data, "", "mreq_test", 1, 1, None if data is not None else "boom")
