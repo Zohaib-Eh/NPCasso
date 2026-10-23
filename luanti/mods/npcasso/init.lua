@@ -340,6 +340,46 @@ core.register_globalstep(function(dtime)
 	end
 end)
 
+-- Spawn safety: never start stuck in terrain, water or trees -----------------------------------------
+
+local function open(pos)
+	local def = core.registered_nodes[core.get_node(pos).name]
+	return def and not def.walkable and (def.liquidtype or "none") == "none"
+end
+
+local function solid(pos)
+	local def = core.registered_nodes[core.get_node(pos).name]
+	return def and def.walkable
+end
+
+-- Lifts the player to the first spot above them with ground underfoot and two free nodes of headroom.
+local function unstick(player)
+	local pos = vector.round(player:get_pos())
+	if solid(vector.offset(pos, 0, -1, 0)) and open(pos) and open(vector.offset(pos, 0, 1, 0)) then return false end
+	for y = 0, 80 do
+		local p = vector.offset(pos, 0, y, 0)
+		if solid(vector.offset(p, 0, -1, 0)) and open(p) and open(vector.offset(p, 0, 1, 0)) then
+			player:set_pos(p)
+			return true
+		end
+	end
+	return false
+end
+
+core.register_on_joinplayer(function(player)
+	local name = player:get_player_name()
+	-- Free movement for building the village and getting around (singleplayer owner only).
+	if core.is_singleplayer() or core.check_player_privs(name, {server = true}) then
+		local privs = core.get_player_privs(name)
+		privs.fly, privs.fast, privs.noclip = true, true, true
+		core.set_player_privs(name, privs)
+	end
+	core.after(2, function()
+		local p = core.get_player_by_name(name)
+		if p and unstick(p) then core.chat_send_player(name, "[npcasso] Moved you out of the terrain.") end
+	end)
+end)
+
 -- Commands -----------------------------------------------------------------------------------------
 
 local function load_npcs(cb)
@@ -361,13 +401,15 @@ end
 core.after(1, load_until_ready)
 
 core.register_chatcommand("npcasso", {
-	params = "spawn <npc_id> | remove | debug | reload",
+	params = "spawn <npc_id> | remove | debug | reload | unstuck",
 	description = "NPCasso tools",
 	privs = {server = true},
 	func = function(name, param)
 		local player = core.get_player_by_name(name)
 		local cmd, arg = param:match("^(%S*)%s*(%S*)")
-		if cmd == "spawn" then
+		if cmd == "unstuck" then
+			return true, unstick(player) and "Moved you to open ground." or "You're already standing free (or no ground above)."
+		elseif cmd == "spawn" then
 			if not npcasso.npcs[arg] then return false, "Unknown NPC. Known: " .. table.concat((function()
 				local k = {} for id in pairs(npcasso.npcs) do table.insert(k, id) end return k end)(), ", ") end
 			core.add_entity(player:get_pos(), "npcasso:npc",
@@ -410,6 +452,6 @@ core.register_chatcommand("npcasso", {
 			step(1)
 			return true
 		end
-		return false, "Usage: /npcasso " .. "spawn <npc_id> | remove | debug | reload"
+		return false, "Usage: /npcasso " .. "spawn <npc_id> | remove | debug | reload | unstuck"
 	end,
 })
