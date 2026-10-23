@@ -47,9 +47,14 @@ def test_react_needs_shout():
     assert v({"shout": "Oi!", "memory": "m", "claims": [claim(1, "theft")]}, "npc_react")["ok"]
 
 
-def test_unclaimed_mention_flag():
+def test_unclaimed_mention_is_error():
     r = v({"reply": "Thanks for the gift.", "claims": []})
-    assert r["ok"] and "unclaimed_mention:gift" in r["flags"]
+    assert not r["ok"] and "unclaimed_mention:gift" in r["errors"]
+    assert "unclaimed_mention:promise" in v({"reply": "You kept your promise!", "claims": []})["errors"]
+
+
+def test_event_words_fine_when_claimed():
+    assert v({"reply": "You stole my apple.", "claims": [claim(1, "theft")]})["ok"]
 
 
 def test_tone_flag():

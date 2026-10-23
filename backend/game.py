@@ -1,5 +1,6 @@
 """Game orchestration: events, talk, trade, tick. Owns every state change; the LLM only proposes text."""
 import json
+import time
 
 from . import db, rules
 from .validator import validate
@@ -8,6 +9,7 @@ CONFIG = db.load_config()
 GAME_EVENTS = {"theft", "gift", "vandalism", "repair", "hit_npc", "trade", "walk_away"}
 REACT_EVENTS = {"theft", "vandalism", "hit_npc"}
 TARGET_KNOWS = {"gift", "hit_npc", "trade"}
+REACT_COOLDOWN_S = 5  # spam-clicking records every event but the NPC reacts (LLM call + notice) once
 
 
 def npc_cfg(npc_id: str) -> dict:
@@ -43,6 +45,23 @@ def log_call(conn, task, npc_id, player, thread_id, user, res, vres=None, retrie
         "outcome": None, "prev_id": prev_id})
 
 
+def describe(type, npc, target, item) -> tuple[str, str]:
+    """Authoritative wording of an event: (what the NPC is told, the NPC's first-person memory)."""
+    whose = "your" if npc == target else f"{name(target)}'s" if target else "the"
+    thing = item or "something"
+    you = "you" if npc == target else name(target) if target else "someone"
+    what = {
+        "theft": f"the newcomer took {thing} from {whose} stall without paying",
+        "vandalism": f"the newcomer smashed {whose} anvil",
+        "repair": f"the newcomer put {whose} anvil back",
+        "hit_npc": f"the newcomer hit {you}",
+        "gift": f"the newcomer gave {you} {thing}",
+        "trade": f"the newcomer traded with {you}",
+    }.get(type, f"{type} by the newcomer")
+    memory = what.replace(" your ", " my ").replace(" you", " me")
+    return what, memory
+
+
 def record_event(conn, llm, ev: dict) -> dict:
     if ev["type"] not in GAME_EVENTS:
         raise ValueError(f"unknown event type {ev['type']!r}")
@@ -63,22 +82,20 @@ def record_event(conn, llm, ev: dict) -> dict:
     for npc in knowers:
         delta = rules.trust_delta(ev["type"], "witnessed", rules.gift_pref(npc_cfg(npc), item))
         db.add_trust(conn, npc, player, delta)
-        text = f"{ev['type']} by the newcomer"
-        if ev["type"] in REACT_EVENTS:
+        what, text = describe(ev["type"], npc, target, item)
+        fresh = time.time() - (db.get_flag(conn, npc, player, "last_react") or 0) > REACT_COOLDOWN_S
+        if ev["type"] in REACT_EVENTS and fresh:
+            db.set_flag(conn, npc, player, "last_react", time.time())
             ctx = build_context(conn, npc, player)
-            ctx["event"] = {"id": eid, "type": ev["type"], "details": ev.get("details", {})}
+            ctx["event"] = {"id": eid, "type": ev["type"], "what": what}
             thread = f"{player}:{npc}:event:{eid}"
             res = llm.complete("npc_react", ctx, thread)
             vres = validate("npc_react", res.data, ctx)
             log_call(conn, "npc_react", npc, player, thread, ctx, res, vres)
-            if vres["ok"]:
-                mem = res.data.get("memory")
-                text = mem.strip() if isinstance(mem, str) and mem.strip() else text
+            if vres["ok"]:  # memory text stays authoritative; the LLM only voices the shout
                 out["shouts"].append({"npc_id": npc, "text": res.data["shout"]})
-        elif ev["type"] == "gift" and item:
-            text = f"the newcomer gave me {item}"
         db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta))
-        if abs(delta) >= 10:
+        if abs(delta) >= 10 and (fresh or ev["type"] not in REACT_EVENTS):
             out["notices"].append(f"{name(npc)} will remember that.")
     if ev["type"] == "gift" and item and target:
         _gift_progress(conn, player, target, item, ev["game_time"], out)

@@ -18,8 +18,9 @@ _RULES = (
     "List every past event you mention in claims with its event_id. "
 )
 SYSTEM_PROMPTS = {
-    "npc_react": _RULES + "The user JSON also has event: something you just witnessed. React to it out loud and "
-    "write a one-sentence first-person memory of it. Reply with JSON only: "
+    "npc_react": _RULES + "The user JSON also has event: something you just witnessed; event.what says exactly what "
+    "happened. React out loud to THIS event only, in character, and write a one-sentence first-person memory of it. "
+    "Reply with JSON only: "
     '{"shout": str, "memory": str, ' + _CLAIMS + "}",
     "intent_classify": "Classify a player's chat message to a villager in a game. The user message is JSON with "
     "npc and player_message. Reply with JSON only: "

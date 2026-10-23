@@ -68,4 +68,4 @@ def test_greet(db_path):
     c = client(db_path)
     c.post("/event", json=EV)
     r = c.post("/greet", json={"world": "w", "player": "p", "npc_id": "elise", "thread_id": "g", "game_time": 1.2})
-    assert r.status_code == 200 and "I saw them: theft" in r.json()["reply"]
+    assert r.status_code == 200 and "the newcomer took apple from my stall without paying" in r.json()["reply"]

@@ -34,7 +34,17 @@ end
 function npcasso.post(path, body, cb) fetch("POST", path, body, cb or function() end) end
 function npcasso.get(path, cb) fetch("GET", path, nil, cb) end
 
-function npcasso.world() return core.get_worldpath():match("([^/\\]+)$") end
+local store = core.get_mod_storage()
+
+-- World id = save folder name + a random id kept in this save's mod storage. Deleting the save deletes the id,
+-- so a new world with the same name starts with NPCs who remember nothing. Copied saves keep the id but get a
+-- different folder name, so demo copies don't share memories either.
+if store:get_string("world_id") == "" then
+	math.randomseed(os.time() + core.get_us_time())
+	store:set_string("world_id", ("%08x"):format(math.random(0, 0x7fffffff)))
+end
+local WORLD_ID = core.get_worldpath():match("([^/\\]+)$") .. "-" .. store:get_string("world_id")
+function npcasso.world() return WORLD_ID end
 function npcasso.game_time() return core.get_day_count() + core.get_timeofday() end
 
 local function npc_name(id) return (npcasso.npcs[id] or {}).name or id end
@@ -345,15 +355,44 @@ core.register_on_leaveplayer(function(player) talk[player:get_player_name()] = n
 
 -- World actions ------------------------------------------------------------------------------------
 
+-- Elise's stock chest: opens like a Minecraft chest. Taking anything out is theft; she may or may not see it.
+local CRATE_FS = "size[8,8.5]label[0,0;Elise's stock (not yours)]list[context;main;0,0.5;8,2;]" ..
+	"list[current_player;main;0,3.85;8,1;]list[current_player;main;0,5.08;8,3;8]" ..
+	"listring[context;main]listring[current_player;main]"
+
+local function stock_crate(pos)
+	local meta = core.get_meta(pos)
+	meta:set_string("formspec", CRATE_FS)
+	meta:set_string("infotext", "Elise's stock")
+	local inv = meta:get_inventory()
+	inv:set_size("main", 16)
+	if inv:is_empty("main") then
+		for i = 1, 6 do inv:set_stack("main", i, "default:apple 10") end
+		if core.registered_items["farming:bread"] then inv:set_stack("main", 7, "farming:bread 5") end
+	end
+end
+
 core.register_node("npcasso:apple_crate", {
-	description = "Elise's Apple Crate",
-	tiles = {"default_wood.png^default_apple.png", "default_wood.png", "default_wood.png"},
+	description = "Elise's Stock Chest",
+	tiles = {"default_chest_top.png", "default_chest_top.png", "default_chest_side.png",
+		"default_chest_side.png", "default_chest_side.png", "default_chest_front.png"},
+	paramtype2 = "facedir",
 	groups = {choppy = 2, oddly_breakable_by_hand = 2},
-	on_rightclick = function(pos, node, clicker)
-		if not clicker or not clicker:is_player() then return end
-		local left = clicker:get_inventory():add_item("main", ItemStack("default:apple"))
-		if not left:is_empty() then return end
-		npcasso.event(clicker, "theft", "elise", {item = "default:apple"}, npcasso.witnesses(clicker:get_pos()))
+	on_construct = stock_crate,
+	allow_metadata_inventory_put = function() return 0 end,
+	allow_metadata_inventory_move = function() return 0 end,
+	on_metadata_inventory_take = function(pos, listname, index, stack, player)
+		if not player or not player:is_player() then return end
+		npcasso.event(player, "theft", "elise", {item = stack:get_name(), count = stack:get_count()},
+			npcasso.witnesses(player:get_pos()))
+	end,
+})
+
+-- Crates placed before this version had no inventory; stock them when loaded.
+core.register_lbm({
+	name = "npcasso:stock_old_crates", nodenames = {"npcasso:apple_crate"}, run_at_every_load = true,
+	action = function(pos)
+		if core.get_meta(pos):get_string("formspec") == "" then stock_crate(pos) end
 	end,
 })
 
@@ -443,8 +482,6 @@ core.register_on_joinplayer(function(player)
 end)
 
 -- Starter village: built once per world where the player first stands --------------------------------
-
-local store = core.get_mod_storage()
 
 function npcasso.village()
 	local s = store:get_string("village")
