@@ -64,6 +64,7 @@ local function apply(name, out)
 	local player = core.get_player_by_name(name)
 	if not player or not out then return end
 	for _, s in ipairs(out.shouts or {}) do
+		npcasso.bubble(s.npc_id, s.text)
 		core.chat_send_player(name, core.colorize("#FFD27F", "<" .. npc_name(s.npc_id) .. "> ") .. s.text)
 	end
 	for i, n in ipairs(out.notices or {}) do
@@ -75,11 +76,34 @@ local function apply(name, out)
 	end
 end
 
+local function npc_entity(id)
+	for _, e in pairs(core.luaentities) do
+		if e.name == "npcasso:npc" and e.npc_id == id then return e end
+	end
+end
+
 function npcasso.event(player, type, target, details, witnesses)
 	local name = player:get_player_name()
+	-- Instant feedback: witnesses stop, turn to the player and show "!" while the backend thinks.
+	for _, id in ipairs(witnesses or {}) do
+		local e = npc_entity(id)
+		if e then
+			local d = vector.subtract(player:get_pos(), e.object:get_pos())
+			e.target, e.rest = nil, 5
+			e.object:set_velocity({x = 0, y = 0, z = 0})
+			e.object:set_yaw(math.atan2(-d.x, d.z))
+			npcasso.bubble(id, "!", 4)
+		end
+	end
 	npcasso.post("/event", {world = npcasso.world(), player = name, type = type, target = target,
 		details = details or {}, witnesses = witnesses or {}, game_time = npcasso.game_time()},
-		function(out) apply(name, out) end)
+		function(out)
+			apply(name, out)  -- notices and items now; the spoken reaction follows
+			if out and out.react and #out.react > 0 then
+				npcasso.post("/react", {world = npcasso.world(), player = name, event_id = out.event_id,
+					npc_ids = out.react}, function(r) apply(name, r) end)
+			end
+		end)
 end
 
 -- NPC entities and witnesses -----------------------------------------------------------------------
@@ -121,7 +145,7 @@ local function set_look(self)
 	local info = npcasso.npcs[self.npc_id] or {}
 	self.object:set_properties({
 		nametag = (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
-		nametag_color = "#FFFFFF",
+		nametag_color = "#FFFFFF", nametag_bgcolor = "#00000060",
 		textures = {info.skin or "character.png"},
 	})
 end
@@ -134,6 +158,43 @@ local function stop(self)
 	self.object:set_velocity({x = 0, y = v.y, z = 0})
 	if self.target then self.object:set_animation(ANIM_STAND, 30, 0) end
 	self.target = nil
+end
+
+-- Speech bubble: the NPC's nametag shows what they say for a few seconds, then goes back to name and role.
+local bubble_token = {}
+local function wrap(text, width, max_lines)
+	local lines, line = {}, ""
+	for word in tostring(text):gmatch("%S+") do
+		if #line + #word + 1 > width and line ~= "" then
+			table.insert(lines, line)
+			line = word
+		else
+			line = line == "" and word or line .. " " .. word
+		end
+	end
+	if line ~= "" then table.insert(lines, line) end
+	if #lines > max_lines then
+		lines = {unpack(lines, 1, max_lines)}
+		lines[max_lines] = lines[max_lines] .. "..."
+	end
+	return table.concat(lines, "\n")
+end
+
+function npcasso.bubble(npc_id, text, secs)
+	local token = {}
+	bubble_token[npc_id] = token
+	for _, e in pairs(core.luaentities) do
+		if e.name == "npcasso:npc" and e.npc_id == npc_id then
+			e.object:set_properties({nametag = wrap(text, 34, 4) .. "\n\n" .. npc_name(npc_id),
+				nametag_color = "#FFF3DC", nametag_bgcolor = "#000000B0"})
+		end
+	end
+	core.after(secs or 7, function()
+		if bubble_token[npc_id] ~= token then return end
+		for _, e in pairs(core.luaentities) do
+			if e.name == "npcasso:npc" and e.npc_id == npc_id then set_look(e) end
+		end
+	end)
 end
 
 core.register_entity("npcasso:npc", {
@@ -187,6 +248,7 @@ core.register_entity("npcasso:npc", {
 					thread_id = npcasso.world() .. ":" .. name .. ":" .. self.npc_id .. ":greet:" .. os.time(),
 					game_time = npcasso.game_time()}, function(out)
 					if out and out.reply ~= "" and not talk[name] then
+						npcasso.bubble(self.npc_id, out.reply)
 						core.chat_send_player(name, core.colorize("#FFD27F", "<" .. npc_name(self.npc_id) .. "> ") .. out.reply)
 					end
 				end)
@@ -233,29 +295,47 @@ core.register_entity("npcasso:npc", {
 
 -- Dialogue -----------------------------------------------------------------------------------------
 
+local function plain(s) return (tostring(s):gsub("[<>]", "")) end
+
 local function show_talk(name)
 	local t = talk[name]
 	if not t then return end
-	local lines = {}
-	for i = math.max(1, #t.history - 7), #t.history do
-		table.insert(lines, core.formspec_escape(t.history[i]))
-	end
-	if t.busy then table.insert(lines, core.formspec_escape(npc_name(t.npc) .. " is thinking...")) end
 	local info = npcasso.npcs[t.npc] or {}
-	local fs = "formspec_version[6]size[12,9]" ..
-		"label[0.4,0.5;" .. core.formspec_escape(npc_name(t.npc) .. " · " .. (info.role or "")) .. "]" ..
-		"textarea[0.4,1;11.2,5.6;;;" .. table.concat(lines, "\n") .. "]" ..
-		"field[0.4,6.9;8.6,0.8;msg;;]field_close_on_enter[msg;false]" ..
-		"button[9.2,6.9;2.4,0.8;send;Say]" ..
-		"button[0.4,8;3.4,0.8;give;Give held item]" ..
-		"button[4.2,8;3.4,0.8;trade;Trade]" ..
-		"button_exit[8,8;3.6,0.8;close;Leave]"
+	local log = {}
+	for i = math.max(1, #t.history - 11), #t.history do
+		local h = t.history[i]
+		if h.who == "*" then
+			table.insert(log, "<i><style color=#A0A0A0>" .. plain(h.text) .. "</style></i>")
+		else
+			local color = h.who == "You" and "#9AD0FF" or "#FFD27F"
+			table.insert(log, "<b><style color=" .. color .. ">" .. plain(h.who) .. "</style></b>  " .. plain(h.text))
+		end
+	end
+	if t.busy then
+		table.insert(log, "<i><style color=#A0A0A0>" .. plain(npc_name(t.npc)) .. " is thinking...</style></i>")
+	end
+	local fs = "formspec_version[6]size[15,10.6]" ..
+		"style_type[button,button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]" ..
+		"box[0.3,0.3;4.3,7.7;#00000044]" ..
+		"model[0.4,0.4;4.1,7.5;portrait;character.b3d;" .. core.formspec_escape(info.skin or "character.png") ..
+		";-5,200;false;true;0,79;30]" ..
+		"hypertext[0.3,8.15;4.3,1.4;title;" .. core.formspec_escape("<global halign=center><big><b>" ..
+		plain(info.name or t.npc) .. "</b></big>\n<style color=#BBBBBB>" .. plain(info.role or "") .. "</style>") .. "]" ..
+		"box[4.9,0.3;9.8,7.7;#00000066]" ..
+		"hypertext[5.1,0.45;9.5,7.4;log;" .. core.formspec_escape("<global valign=bottom color=#EEEEEE size=16>" ..
+		table.concat(log, "\n\n")) .. "]" ..
+		"field[4.9,8.25;7.5,0.9;msg;;]field_close_on_enter[msg;false]" ..
+		"button[12.6,8.25;2.1,0.9;send;Say]" ..
+		"button[4.9,9.4;3.1,0.9;trade;Trade]" ..
+		"button[8.25,9.4;3.1,0.9;give;Give held item]" ..
+		"button_exit[11.6,9.4;3.1,0.9;close;Leave]" ..
+		"set_focus[msg;true]"
 	core.show_formspec(name, "npcasso:talk", fs)
 end
 
 local function say(name, who, text)
 	local t = talk[name]
-	if t then table.insert(t.history, who .. ": " .. text) end
+	if t then table.insert(t.history, {who = who, text = text}) end
 end
 
 function npcasso.open_talk(player, npc_id)
@@ -274,13 +354,13 @@ local function send(player, msg)
 	say(name, "You", msg)
 	t.busy, t.sent = true, t.sent + 1
 	show_talk(name)
-	npcasso.post("/talk", {world = npcasso.world(), player = name, npc_id = t.npc, message = msg:sub(1, 500),
+	npcasso.post("/talk", {world = npcasso.world(), player = name, npc_id = t.npc, message = msg,
 		thread_id = t.thread, game_time = npcasso.game_time()}, function(out)
 		if talk[name] ~= t then return end
 		t.busy = false
 		say(name, npc_name(t.npc), out and out.reply or (npc_name(t.npc) .. " seems distracted."))
 		apply(name, out)
-		show_talk(name)
+		if not t.trading then show_talk(name) end
 	end)
 end
 
@@ -291,50 +371,95 @@ local function give(player)
 		say(name, "*", "You have nothing in your hand.")
 		return show_talk(name)
 	end
-	local item = stack:get_name()
+	local item, desc = stack:get_name(), stack:get_short_description()
 	stack:take_item(1)
 	player:set_wielded_item(stack)
-	local desc = (core.registered_items[item] or {}).description or item
-	say(name, "*", "You give " .. npc_name(t.npc) .. " " .. desc)
+	say(name, "*", "You give " .. npc_name(t.npc) .. " " .. desc .. ".")
 	npcasso.event(player, "gift", t.npc, {item = item}, {})
 	show_talk(name)
 end
 
-local function trade(player)
-	local name, t = player:get_player_name(), talk[player:get_player_name()]
-	local e = find_npc(t.npc, player:get_pos(), 12)
-	local info = npcasso.npcs[t.npc] or {}
-	local has_block = true
-	if info.work_block and e then
-		has_block = core.find_node_near(e.object:get_pos(), WORK_RANGE, ANVILS, true) ~= nil
+-- Trade window: one offer per NPC, Minecraft villager style. The price comes from the backend (hidden trust).
+local function short(item) return ItemStack(item):get_short_description() end
+
+local function show_trade(name)
+	local t = talk[name]
+	if not t then return end
+	local q, info = t.quote, npcasso.npcs[t.npc] or {}
+	local fs = "formspec_version[6]size[10.5,10.2]" ..
+		"style_type[button,button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]" ..
+		"hypertext[0.4,0.3;9.7,0.8;title;" .. core.formspec_escape("<big><b>Trade with " ..
+		plain(info.name or t.npc) .. "</b></big>") .. "]" ..
+		"box[0.4,1.2;9.7,2.1;#00000055]"
+	if q == nil then
+		fs = fs .. "label[0.8,2.2;" .. core.formspec_escape(npc_name(t.npc) .. " is thinking about a price...") .. "]"
+	elseif q.ok then
+		fs = fs ..
+			"item_image_button[0.9,1.5;1.5,1.5;" .. q.cost.item .. ";cost;" .. q.cost.count .. "]" ..
+			"image[2.8,1.8;1.6,0.9;gui_furnace_arrow_bg.png^[transformR270]" ..
+			"item_image_button[4.8,1.5;1.5,1.5;" .. q.give.item .. ";give_item;" .. q.give.count .. "]" ..
+			"button[7.1,1.75;2.7,1.0;do_trade;Trade]" ..
+			"tooltip[cost;" .. core.formspec_escape(q.cost.count .. " x " .. short(q.cost.item)) .. "]" ..
+			"tooltip[give_item;" .. core.formspec_escape(q.give.count .. " x " .. short(q.give.item)) .. "]"
+	else
+		fs = fs .. "label[0.8,2.2;" .. core.formspec_escape(q.reason == "no_work_block" and
+			"\"I can't work without my anvil.\"" or "\"Not today. Not for you.\"") .. "]"
 	end
+	fs = fs .. "label[0.4,3.75;" .. core.formspec_escape(t.trade_status or "") .. "]" ..
+		"list[current_player;main;0.4,4.3;8,1;]" ..
+		"list[current_player;main;0.4,5.65;8,3;8]" ..
+		"button[0.4,9.2;3,0.8;back;Back]" ..
+		"button_exit[7.1,9.2;3,0.8;close;Leave]"
+	core.show_formspec(name, "npcasso:trade", fs)
+end
+
+local function work_block_present(player, npc_id)
+	if not (npcasso.npcs[npc_id] or {}).work_block then return true end
+	local e = find_npc(npc_id, player:get_pos(), 16)
+	return e ~= nil and core.find_node_near(e.object:get_pos(), WORK_RANGE, ANVILS, true) ~= nil
+end
+
+local function quote(player, cb)
+	local name, t = player:get_player_name(), talk[player:get_player_name()]
 	npcasso.post("/trade", {world = npcasso.world(), player = name, npc_id = t.npc,
-		work_block_present = has_block}, function(q)
+		work_block_present = work_block_present(player, t.npc)}, function(q)
 		if talk[name] ~= t then return end
-		if not q then
-			say(name, npc_name(t.npc), npc_name(t.npc) .. " seems distracted.")
-		elseif not q.ok then
-			say(name, npc_name(t.npc), q.reason == "no_work_block" and "Can't work without my anvil." or "Not today.")
-		else
+		t.quote = q or {ok = false, reason = "distracted"}
+		cb(t)
+	end)
+end
+
+local function open_trade(player)
+	local name, t = player:get_player_name(), talk[player:get_player_name()]
+	t.trading, t.quote, t.trade_status = true, nil, ""
+	show_trade(name)
+	quote(player, function() show_trade(name) end)
+end
+
+local function do_trade(player)
+	local name = player:get_player_name()
+	quote(player, function(t)  -- re-quote: trust may have changed since the window opened
+		local q = t.quote
+		if q.ok then
 			local inv = player:get_inventory()
 			local cost = ItemStack(q.cost.item .. " " .. q.cost.count)
 			if not inv:contains_item("main", cost) then
-				say(name, npc_name(t.npc), ("That'll be %d %s."):format(q.cost.count,
-					(core.registered_items[q.cost.item] or {}).description or q.cost.item))
+				t.trade_status = "You need " .. q.cost.count .. " x " .. short(q.cost.item) .. "."
 			else
 				inv:remove_item("main", cost)
 				local left = inv:add_item("main", ItemStack(q.give.item .. " " .. q.give.count))
 				if not left:is_empty() then core.add_item(player:get_pos(), left) end
-				say(name, "*", "Trade done.")
+				t.trade_status = "Traded for " .. q.give.count .. " x " .. short(q.give.item) .. "."
+				say(name, "*", t.trade_status)
 				npcasso.event(player, "trade", t.npc, {give = q.give, cost = q.cost}, {})
 			end
 		end
-		show_talk(name)
+		show_trade(name)
 	end)
 end
 
 core.register_on_player_receive_fields(function(player, formname, fields)
-	if formname ~= "npcasso:talk" then return end
+	if formname ~= "npcasso:talk" and formname ~= "npcasso:trade" then return end
 	local name = player:get_player_name()
 	local t = talk[name]
 	if not t then return true end
@@ -343,9 +468,16 @@ core.register_on_player_receive_fields(function(player, formname, fields)
 	elseif fields.give then
 		give(player)
 	elseif fields.trade then
-		trade(player)
+		open_trade(player)
+	elseif fields.do_trade then
+		do_trade(player)
+	elseif fields.back then
+		t.trading = false
+		show_talk(name)
 	elseif fields.quit or fields.close then
-		if t.sent <= 1 then npcasso.event(player, "walk_away", t.npc, {messages = t.sent}, {}) end
+		if t.sent <= 1 and formname == "npcasso:talk" then
+			npcasso.event(player, "walk_away", t.npc, {messages = t.sent}, {})
+		end
 		talk[name] = nil
 	end
 	return true
