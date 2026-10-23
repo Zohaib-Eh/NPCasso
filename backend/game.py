@@ -79,6 +79,83 @@ def record_event(conn, llm, ev: dict) -> dict:
         db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta))
         if abs(delta) >= 10:
             out["notices"].append(f"{name(npc)} will remember that.")
+    if ev["type"] == "gift" and item and target:
+        _gift_progress(conn, player, target, item, ev["game_time"], out)
+    return out
+
+
+def _internal_event(conn, player, npc_id, type, game_time, text, details=None) -> int:
+    """A game-derived event (promise kept/broken, quest done/failed) the NPC always knows about."""
+    eid = db.add_event(conn, {"player": player, "actor": player, "target": npc_id, "type": type,
+                              "details": details or {}, "witnesses": [npc_id], "game_time": game_time,
+                              "source": "game", "verified": True, "confidence": None})
+    delta = rules.trust_delta(type)
+    db.add_trust(conn, npc_id, player, delta)
+    db.add_memory(conn, npc_id, player, eid, type, text, "witnessed", 1.0, abs(delta))
+    return eid
+
+
+def _gift_progress(conn, player, npc_id, item, game_time, out):
+    for p in db.open_promises(conn, npc_id, player):
+        if p["item"] != item:
+            continue
+        left = p["count"] - 1
+        if left > 0:
+            db.update_promise(conn, p["id"], count=left)
+        elif p["kind"] == "promise":
+            db.update_promise(conn, p["id"], count=0, status="kept")
+            _internal_event(conn, player, npc_id, "promise_kept", game_time, f"the newcomer kept their word about {item}")
+            out["notices"].append(f"{name(npc_id)} noticed you kept your word.")
+        else:
+            db.update_promise(conn, p["id"], count=0, status="done")
+            _internal_event(conn, player, npc_id, "quest_done", game_time, f"the newcomer brought the {item} I asked for")
+            if p["reward"] in CONFIG["items"]:
+                out["give"].append({"item": CONFIG["items"][p["reward"]], "count": 1})
+        return  # one gift settles one promise
+
+
+def trade_quote(conn, world, player, npc_id, work_block_present: bool) -> dict:
+    terms = rules.trade_terms(npc_cfg(npc_id), db.get_trust(conn, npc_id, f"{world}:{player}"), work_block_present)
+    if terms["ok"]:
+        for k in ("give", "cost"):
+            terms[k] = {**terms[k], "item": CONFIG["items"][terms[k]["item"]]}
+    return terms
+
+
+def tick(conn, llm, world, player, game_time) -> dict:
+    """Periodic world update: deadlines and gossip. llm unused for now; kept so ticks can voice gossip later."""
+    player = f"{world}:{player}"
+    out = {"notices": [], "shouts": []}
+    for p in db.open_promises(conn, player=player):
+        if p["deadline"] >= game_time:
+            continue
+        if p["kind"] == "promise":
+            db.update_promise(conn, p["id"], status="broken")
+            _internal_event(conn, player, p["npc_id"], "promise_broken", game_time,
+                            f"the newcomer promised me {p['item']} and never brought it")
+            out["notices"].append(f"{name(p['npc_id'])} will remember that.")
+        else:
+            db.update_promise(conn, p["id"], status="failed")
+            _internal_event(conn, player, p["npc_id"], "quest_failed", game_time,
+                            f"the newcomer never brought the {p['item']}")
+
+    src = conn.execute("select * from memories where player=? and how='witnessed' and severity>=20 and gossiped=0 "
+                       "order by id limit 1", (player,)).fetchone()
+    if src:
+        conn.execute("update memories set gossiped=1 where event_id=?", (src["event_id"],))
+        knowers = {r["npc_id"] for r in conn.execute("select npc_id from memories where event_id=? and player=?",
+                                                     (src["event_id"], player))}
+        told = [n for n in CONFIG["npcs"] if n not in knowers]
+        for npc in told:
+            db.add_memory(conn, npc, player, src["event_id"], src["type"],
+                          f"{name(src['npc_id'])} told me: {src['text']}", f"told_by:{src['npc_id']}", 0.5,
+                          src["severity"] // 2)
+            db.add_trust(conn, npc, player, rules.trust_delta(src["type"], "told"))
+        if told:
+            db.add_event(conn, {"player": player, "actor": src["npc_id"], "target": None, "type": "told",
+                                "details": {"event_id": src["event_id"], "to": told}, "witnesses": told,
+                                "game_time": game_time, "source": "game", "verified": True, "confidence": None})
+        conn.commit()
     return out
 
 

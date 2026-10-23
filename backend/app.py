@@ -39,6 +39,19 @@ class TalkIn(BaseModel):
         return v.strip()
 
 
+class TradeIn(BaseModel):
+    world: str
+    player: str
+    npc_id: str
+    work_block_present: bool = True
+
+
+class TickIn(BaseModel):
+    world: str
+    player: str
+    game_time: float
+
+
 def create_app(db_path: str, llm) -> FastAPI:
     app = FastAPI(title="NPCasso")
     conn = db.connect(db_path)
@@ -70,6 +83,14 @@ def create_app(db_path: str, llm) -> FastAPI:
         out = run(game.talk, llm, t.world, t.player, t.npc_id, t.message, t.thread_id, t.game_time)
         log.info("talk %s: %r -> %r", t.npc_id, t.message, out["reply"])
         return out
+
+    @app.post("/trade")
+    def trade(t: TradeIn):
+        return run(game.trade_quote, t.world, t.player, t.npc_id, t.work_block_present)
+
+    @app.post("/tick")
+    def tick(t: TickIn):
+        return run(game.tick, llm, t.world, t.player, t.game_time)
 
     @app.get("/npc/{npc_id}")
     def npc_state(npc_id: str, world: str, player: str):

@@ -154,3 +154,66 @@ def test_quest_offer_recorded(conn):
     r = talk(conn, ScriptedLLM([Q, offer]), "w", "p", "elise", "any work?", "t", 1.0)
     q = db.open_promises(conn, "elise", "w:p", kind="quest")[0]
     assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["reward"]) == (2, 3.0, "bread")
+
+
+from backend.game import tick, trade_quote
+
+
+def test_gossip_spreads_once(conn):
+    record_event(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    tick(conn, MockLLM(), "w", "p", 1.2)
+    m = db.top_memories(conn, "mira", "w:p")[0]
+    assert m["how"] == "told_by:elise" and m["reliability"] == 0.5 and m["type"] == "theft"
+    assert db.get_trust(conn, "mira", "w:p") == -5
+    tick(conn, MockLLM(), "w", "p", 1.3)
+    assert len(db.top_memories(conn, "mira", "w:p")) == 1
+
+
+def test_gossip_skips_npc_who_already_knows(conn):
+    record_event(conn, MockLLM(), ev("theft", witnesses=["elise", "rowan"]))
+    tick(conn, MockLLM(), "w", "p", 1.2)
+    assert [m["how"] for m in db.top_memories(conn, "rowan", "w:p")] == ["witnessed"]
+
+
+def test_unwitnessed_never_gossiped(conn):
+    record_event(conn, MockLLM(), ev("theft"))
+    tick(conn, MockLLM(), "w", "p", 1.2)
+    assert db.top_memories(conn, "mira", "w:p") == []
+
+
+def test_promise_kept_by_gifts(conn):
+    db.add_promise(conn, "promise", "elise", "w:p", "iron", 2, 2.0)
+    record_event(conn, MockLLM(), ev("gift", details={"item": "default:steel_ingot"}))
+    r = record_event(conn, MockLLM(), ev("gift", details={"item": "default:steel_ingot"}))
+    assert "Elise noticed you kept your word." in r["notices"]
+    assert db.open_promises(conn, "elise", "w:p") == []
+    assert db.get_trust(conn, "elise", "w:p") == 10 + 5 + 5 + 15
+
+
+def test_promise_broken_after_deadline(conn):
+    db.add_promise(conn, "promise", "elise", "w:p", "iron", 2, 2.0)
+    assert tick(conn, MockLLM(), "w", "p", 1.9)["notices"] == []
+    r = tick(conn, MockLLM(), "w", "p", 2.1)
+    assert r["notices"] == ["Elise will remember that."]
+    assert db.get_trust(conn, "elise", "w:p") == -10
+    assert conn.execute("select status from promises").fetchone()["status"] == "broken"
+
+
+def test_quest_done_gives_reward(conn):
+    db.add_promise(conn, "quest", "rowan", "w:p", "coal", 1, 3.0, reward="pickaxe")
+    r = record_event(conn, MockLLM(), ev("gift", target="rowan", details={"item": "default:coal_lump"}))
+    assert r["give"] == [{"item": "default:pick_steel", "count": 1}]
+    assert conn.execute("select status from promises").fetchone()["status"] == "done"
+
+
+def test_quest_failed_after_deadline(conn):
+    db.add_promise(conn, "quest", "rowan", "w:p", "coal", 1, 3.0, reward="pickaxe")
+    tick(conn, MockLLM(), "w", "p", 3.5)
+    assert db.get_trust(conn, "rowan", "w:p") == 0
+
+
+def test_trade_quote_itemstrings(conn):
+    q = trade_quote(conn, "w", "p", "elise", True)
+    assert q == {"ok": True, "give": {"item": "default:apple", "count": 3},
+                 "cost": {"item": "default:steel_ingot", "count": 2}}
+    assert trade_quote(conn, "w", "p", "rowan", False) == {"ok": False, "reason": "no_work_block"}

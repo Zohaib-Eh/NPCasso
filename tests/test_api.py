@@ -45,3 +45,9 @@ def test_talk_rejects_bad_message(db_path):
     for m in ("", "   ", "x" * 501):
         assert c.post("/talk", json={**TALK, "message": m}).status_code == 422
     assert c.post("/talk", json={**TALK, "npc_id": "bob"}).status_code == 422
+
+
+def test_trade_and_tick_routes(db_path):
+    c = client(db_path)
+    assert c.post("/trade", json={"world": "w", "player": "p", "npc_id": "elise", "work_block_present": True}).json()["ok"]
+    assert c.post("/tick", json={"world": "w", "player": "p", "game_time": 1.0}).json() == {"notices": [], "shouts": []}
