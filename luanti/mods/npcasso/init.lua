@@ -18,7 +18,7 @@ local talk = {}                -- player name -> {npc, thread, history = {}, sen
 
 local function fetch(method, path, body, cb)
 	if not http then return cb(nil) end
-	http.fetch({url = BASE .. path, method = method, timeout = 15,
+	http.fetch({url = BASE .. path, method = method, timeout = 30,
 		data = body and core.write_json(body) or nil,
 		extra_headers = body and {"Content-Type: application/json"} or nil},
 		function(res)
@@ -109,7 +109,7 @@ end
 local function set_look(self)
 	local info = npcasso.npcs[self.npc_id] or {}
 	self.object:set_properties({
-		nametag = (info.name or self.npc_id) .. " · " .. (info.role or ""),
+		nametag = (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
 		nametag_color = "#FFFFFF",
 		textures = {info.skin or "character.png"},
 	})
@@ -344,11 +344,21 @@ end)
 
 local function load_npcs(cb)
 	npcasso.get("/npcs", function(n)
-		if n then npcasso.npcs = n end
+		if n then
+			npcasso.npcs = n
+			for _, e in pairs(core.luaentities) do
+				if e.name == "npcasso:npc" then set_look(e) end
+			end
+		end
 		if cb then cb(n) end
 	end)
 end
-core.after(1, load_npcs)
+
+-- Keep trying until the backend answers, so NPCs get names and skins even if it starts after the game.
+local function load_until_ready()
+	load_npcs(function(n) if not n then core.after(10, load_until_ready) end end)
+end
+core.after(1, load_until_ready)
 
 core.register_chatcommand("npcasso", {
 	params = "spawn <npc_id> | remove | debug | reload",
@@ -370,7 +380,6 @@ core.register_chatcommand("npcasso", {
 			return true, "Removed " .. e.npc_id
 		elseif cmd == "reload" then
 			load_npcs(function(n)
-				for _, e in ipairs(each_npc(player:get_pos(), 64)) do set_look(e) end
 				core.chat_send_player(name, n and "NPC list reloaded." or "Backend unreachable.")
 			end)
 			return true

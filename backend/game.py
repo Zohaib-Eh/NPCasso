@@ -72,7 +72,8 @@ def record_event(conn, llm, ev: dict) -> dict:
             vres = validate("npc_react", res.data, ctx)
             log_call(conn, "npc_react", npc, player, thread, ctx, res, vres)
             if vres["ok"]:
-                text = res.data.get("memory") or text
+                mem = res.data.get("memory")
+                text = mem.strip() if isinstance(mem, str) and mem.strip() else text
                 out["shouts"].append({"npc_id": npc, "text": res.data["shout"]})
         elif ev["type"] == "gift" and item:
             text = f"the newcomer gave me {item}"
@@ -192,7 +193,9 @@ def _apply_intent(conn, intent: dict, npc_id, player, game_time, notices) -> dic
         item = claim.get("item")
         happened = any(item is None or rules.short_item(json.loads(r["details"]).get("item", "")) == item
                        for r in rows)
-        if not happened:
+        # Reward a confirmed correction once per game day, so denying random events can't farm trust.
+        if not happened and rules.apology_allowed(db.get_flag(conn, npc_id, player, "last_correction"), game_time):
+            db.set_flag(conn, npc_id, player, "last_correction", game_time)
             db.add_trust(conn, npc_id, player, rules.trust_delta("correction_confirmed"))
             conn.execute("update interactions set outcome='corrected' where id = (select max(id) from interactions "
                          "where task='npc_dialogue' and npc_id=? and player=?)", (npc_id, player))
@@ -207,7 +210,10 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
     cin = {"npc": {"name": cfg["name"], "role": cfg["role"]}, "player_message": message}
     cres = llm.complete("intent_classify", cin, thread_id)
     log_call(conn, "intent_classify", npc_id, player, thread_id, cin, cres)
-    extra = _apply_intent(conn, cres.data or {}, npc_id, player, game_time, notices)
+    try:
+        extra = _apply_intent(conn, cres.data or {}, npc_id, player, game_time, notices)
+    except (TypeError, ValueError, AttributeError):  # well-formed JSON with wrong value types from the LLM
+        extra = {}
 
     ctx = build_context(conn, npc_id, player, message, extra)
     reply, offer, prev = NEUTRAL_LINE, None, None
@@ -215,6 +221,8 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
         res = llm.complete("npc_dialogue", ctx, thread_id)
         vres = validate("npc_dialogue", res.data, ctx)
         prev = log_call(conn, "npc_dialogue", npc_id, player, thread_id, ctx, res, vres, attempt > 0, prev)
+        if res.data is None and res.error:
+            break  # timeout or network error: retrying would blow the game's HTTP budget
         if vres["ok"]:
             reply = res.data["reply"]
             if res.data.get("quest_offer") and not vres["drop_quest"]:

@@ -217,3 +217,41 @@ def test_trade_quote_itemstrings(conn):
     assert q == {"ok": True, "give": {"item": "default:apple", "count": 3},
                  "cost": {"item": "default:steel_ingot", "count": 2}}
     assert trade_quote(conn, "w", "p", "rowan", False) == {"ok": False, "reason": "no_work_block"}
+
+
+# --- final review fixes ---
+
+@pytest.mark.parametrize("intent", [
+    {"intent": "threat", "confidence": "high"},
+    {"intent": "correction", "confidence": 0.9, "claim": "gift"},
+    {"intent": "promise", "confidence": 0.9, "promise": {"item": "iron", "count": 2, "deadline_days": "tomorrow"}},
+])
+def test_talk_survives_wrong_types_in_intent(conn, intent):
+    r = talk(conn, ScriptedLLM([intent, {"reply": "Hm.", "claims": []}]), "w", "p", "elise", "hi", "t", 1.0)
+    assert r["reply"] == "Hm."
+
+
+def test_talk_survives_wrong_types_in_dialogue(conn):
+    bad_claim = {"reply": "x", "claims": [{"event_id": [1], "type": "gift", "how": "witnessed"}]}
+    bad_quest = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": "two", "reward": "bread"}}
+    assert talk(conn, ScriptedLLM([Q, bad_claim, bad_claim]), "w", "p", "elise", "hi", "t", 1.0)["reply"] == NEUTRAL_LINE
+    r = talk(conn, ScriptedLLM([Q, bad_quest]), "w", "p", "elise", "hi", "t", 1.0)
+    assert r["reply"] == "Bring coal." and r["quest_offer"] is None
+
+
+def test_react_memory_wrong_type_uses_template(conn):
+    out = {"shout": "Oi!", "memory": {"x": 1}, "claims": []}
+    record_event(conn, ScriptedLLM([out]), ev("theft", witnesses=["elise"]))
+    assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "theft by the newcomer"
+
+
+def test_false_corrections_cannot_farm_trust(conn):
+    for t in (1.0, 1.1, 1.2):
+        talk(conn, MockLLM(), "w", "p", "elise", "I never gave you iron", "t", t)
+    assert db.get_trust(conn, "elise", "w:p") == 15
+
+
+def test_no_retry_after_llm_error(conn):
+    llm = ScriptedLLM([Q, None, {"reply": "late", "claims": []}])
+    assert talk(conn, llm, "w", "p", "elise", "hi", "t", 1.0)["reply"] == NEUTRAL_LINE
+    assert len([c for c in llm.calls if c[0] == "npc_dialogue"]) == 1
