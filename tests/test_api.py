@@ -29,7 +29,9 @@ def test_event_unknown_type_422(db_path):
 
 
 def test_npcs_list(db_path):
-    assert client(db_path).get("/npcs").json()["elise"] == {"name": "Elise", "role": "Merchant"}
+    n = client(db_path).get("/npcs").json()
+    assert n["elise"]["name"] == "Elise" and n["elise"]["role"] == "Merchant"
+    assert n["rowan"]["work_block"] == "cottages:anvil"
 
 
 TALK = {"world": "w", "player": "p", "npc_id": "elise", "message": "hello", "thread_id": "t", "game_time": 1.0}

@@ -51,7 +51,7 @@ def run_one(llm, sc: dict, msg, split: str) -> dict:
                 intent = json.loads(intent_row["reply"]).get("intent")
             except (TypeError, ValueError):
                 intent = None
-            n_promises = len(db.open_promises(conn, npc, f"{world}:p"))
+            n_promises = len(db.open_promises(conn, npc, f"{world}:p", kind="promise"))
             tokens = sum(r["tokens"] or 0 for r in db.list_interactions(conn, None, 100))
             request_ids = [r["mubit_request_id"] for r in db.list_interactions(conn, None, 100) if r["mubit_request_id"]]
         finally:
