@@ -1,9 +1,16 @@
 import pytest
 
 from backend import db
-from backend.game import record_event
+from backend.game import react, record_event
 from backend.llm import MockLLM
 from tests.conftest import ScriptedLLM
+
+
+def fire(conn, llm, e):
+    """Record an event, then run the NPC reactions the way the game does (two calls)."""
+    r = record_event(conn, llm, e)
+    r["shouts"] = react(conn, llm, e["world"], e["player"], r["event_id"], r["react"])["shouts"]
+    return r
 
 
 def ev(t, **kw):
@@ -12,7 +19,7 @@ def ev(t, **kw):
 
 
 def test_witnessed_theft(conn):
-    r = record_event(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    r = fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
     assert db.get_trust(conn, "elise", "w:p") == -20
     assert r["notices"] == ["Elise will remember that."]
     assert r["shouts"] == [{"npc_id": "elise", "text": "Hey! I saw that!"}]
@@ -40,14 +47,14 @@ def test_worlds_isolated(conn):
 
 
 def test_react_llm_error_still_records(conn):
-    r = record_event(conn, ScriptedLLM([None]), ev("theft", witnesses=["elise"]))
+    r = fire(conn, ScriptedLLM([None]), ev("theft", witnesses=["elise"]))
     assert r["shouts"] == []
     assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer took apple from my stall without paying"
 
 
 def test_react_invalid_output_uses_template(conn):
     bad = {"shout": "Thief!", "memory": "m", "claims": [{"event_id": 999, "type": "gift", "how": "witnessed"}]}
-    r = record_event(conn, ScriptedLLM([bad]), ev("theft", witnesses=["elise"]))
+    r = fire(conn, ScriptedLLM([bad]), ev("theft", witnesses=["elise"]))
     assert r["shouts"] == [] and db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer took apple from my stall without paying"
 
 
@@ -241,7 +248,7 @@ def test_talk_survives_wrong_types_in_dialogue(conn):
 
 def test_react_memory_wrong_type_uses_template(conn):
     out = {"shout": "Oi!", "memory": {"x": 1}, "claims": []}
-    record_event(conn, ScriptedLLM([out]), ev("theft", witnesses=["elise"]))
+    fire(conn, ScriptedLLM([out]), ev("theft", witnesses=["elise"]))
     assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer took apple from my stall without paying"
 
 
@@ -277,15 +284,21 @@ def test_greet_invalid_returns_empty(conn):
 def test_react_memory_is_authoritative_and_event_described(conn):
     out = {"shout": "Ow!", "memory": "they stole my apple", "claims": []}
     llm = ScriptedLLM([out])
-    record_event(conn, llm, ev("hit_npc", witnesses=["elise"]))
+    fire(conn, llm, ev("hit_npc", witnesses=["elise"]))
     assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer hit me"
     assert llm.calls[0][1]["event"]["what"] == "the newcomer hit you"
 
 
 def test_rapid_events_react_once(conn):
     llm = MockLLM()
-    r1 = record_event(conn, llm, ev("hit_npc", witnesses=["elise"]))
-    r2 = record_event(conn, llm, ev("hit_npc", witnesses=["elise"]))
+    r1 = fire(conn, llm, ev("hit_npc", witnesses=["elise"]))
+    r2 = fire(conn, llm, ev("hit_npc", witnesses=["elise"]))
     assert r1["shouts"] and r1["notices"] and r2["shouts"] == [] and r2["notices"] == []
     assert db.get_trust(conn, "elise", "w:p") == 10 - 25 - 25
     assert len([i for i in db.list_interactions(conn, "elise") if i["task"] == "npc_react"]) == 1
+
+
+def test_record_event_makes_no_llm_call(conn):
+    llm = ScriptedLLM([])
+    r = record_event(conn, llm, ev("theft", witnesses=["elise", "mira"]))
+    assert llm.calls == [] and r["react"] == ["elise", "mira"] and r["notices"]

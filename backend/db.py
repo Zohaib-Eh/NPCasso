@@ -32,9 +32,17 @@ def load_config() -> dict:
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
-def connect(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, check_same_thread=False)
+def open_db(path: str) -> sqlite3.Connection:
+    """A plain connection. One per request, so slow LLM calls never block other requests."""
+    conn = sqlite3.connect(path, timeout=15, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    return conn
+
+
+def connect(path: str) -> sqlite3.Connection:
+    """Open, create the schema and seed NPCs from config. Run once at startup (and in tests)."""
+    conn = open_db(path)
+    conn.execute("pragma journal_mode=wal")
     conn.executescript(SCHEMA)
     for npc_id, cfg in load_config()["npcs"].items():
         conn.execute("insert or replace into npcs values (?,?,?,?)",
@@ -75,10 +83,10 @@ def get_trust(conn, npc_id, player) -> int:
 
 def add_trust(conn, npc_id, player, delta) -> int:
     _ensure_rel(conn, npc_id, player)
-    new = max(-100, min(100, get_trust(conn, npc_id, player) + delta))
-    conn.execute("update relationships set trust=? where npc_id=? and player=?", (new, npc_id, player))
+    conn.execute("update relationships set trust = max(-100, min(100, trust + ?)) where npc_id=? and player=?",
+                 (delta, npc_id, player))  # atomic: concurrent requests can't lose an update
     conn.commit()
-    return new
+    return get_trust(conn, npc_id, player)
 
 
 def get_flag(conn, npc_id, player, key):

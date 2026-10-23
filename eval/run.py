@@ -36,7 +36,8 @@ def run_one(llm, sc: dict, msg, split: str) -> dict:
         conn = db.connect(str(Path(tmp) / "eval.db"))
         try:
             for ev in sc.get("setup", []):
-                game.record_event(conn, llm, {"world": world, "player": "p", "game_time": 1.0, **ev})
+                r = game.record_event(conn, llm, {"world": world, "player": "p", "game_time": 1.0, **ev})
+                game.react(conn, llm, world, "p", r["event_id"], r["react"])
             for t in sc.get("ticks", []):
                 game.tick(conn, llm, world, "p", t)
             t0 = time.monotonic()

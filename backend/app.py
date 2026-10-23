@@ -1,7 +1,7 @@
 """FastAPI routes. Thin: validation and wiring only; logic lives in game.py."""
 import logging
 import os
-import threading
+from contextlib import closing
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -32,6 +32,18 @@ class EventIn(BaseModel):
     @classmethod
     def lua_empty_dict(cls, v):
         return v if isinstance(v, dict) else {}
+
+
+class ReactIn(BaseModel):
+    world: str
+    player: str
+    event_id: int
+    npc_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("npc_ids", mode="before")
+    @classmethod
+    def lua_empty_list(cls, v):
+        return v if isinstance(v, list) else []
 
 
 class GreetIn(BaseModel):
@@ -73,11 +85,11 @@ class TickIn(BaseModel):
 
 def create_app(db_path: str, llm) -> FastAPI:
     app = FastAPI(title="NPCasso")
-    conn = db.connect(db_path)
-    lock = threading.Lock()  # ponytail: one global lock over one sqlite conn; fine for a single local player
+    db.connect(db_path).close()  # create schema + seed once
 
     def run(fn, *args):
-        with lock:
+        # A connection per request (sqlite WAL): a slow LLM call in one request never stalls another.
+        with closing(db.open_db(db_path)) as conn:
             try:
                 return fn(conn, *args)
             except ValueError as e:
@@ -102,6 +114,12 @@ def create_app(db_path: str, llm) -> FastAPI:
     def talk(t: TalkIn):
         out = run(game.talk, llm, t.world, t.player, t.npc_id, t.message, t.thread_id, t.game_time)
         log.info("talk %s: %r -> %r", t.npc_id, t.message, out["reply"])
+        return out
+
+    @app.post("/react")
+    def react(r: ReactIn):
+        out = run(game.react, llm, r.world, r.player, r.event_id, r.npc_ids)
+        log.info("react %s -> %s", r.event_id, out)
         return out
 
     @app.post("/greet")

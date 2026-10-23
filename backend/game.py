@@ -73,7 +73,7 @@ def record_event(conn, llm, ev: dict) -> dict:
     eid = db.add_event(conn, {"player": player, "actor": player, "target": target, "type": ev["type"],
                               "details": ev.get("details", {}), "witnesses": witnesses,
                               "game_time": ev["game_time"], "source": "game", "verified": True, "confidence": None})
-    out = {"event_id": eid, "notices": [], "shouts": [], "give": []}
+    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": []}
     if ev["type"] == "walk_away":  # weak signal: logged, never a label or a state change
         return out
 
@@ -86,19 +86,35 @@ def record_event(conn, llm, ev: dict) -> dict:
         fresh = time.time() - (db.get_flag(conn, npc, player, "last_react") or 0) > REACT_COOLDOWN_S
         if ev["type"] in REACT_EVENTS and fresh:
             db.set_flag(conn, npc, player, "last_react", time.time())
-            ctx = build_context(conn, npc, player)
-            ctx["event"] = {"id": eid, "type": ev["type"], "what": what}
-            thread = f"{player}:{npc}:event:{eid}"
-            res = llm.complete("npc_react", ctx, thread)
-            vres = validate("npc_react", res.data, ctx)
-            log_call(conn, "npc_react", npc, player, thread, ctx, res, vres)
-            if vres["ok"]:  # memory text stays authoritative; the LLM only voices the shout
-                out["shouts"].append({"npc_id": npc, "text": res.data["shout"]})
+            out["react"].append(npc)  # the game asks for the spoken reaction separately, so this returns at once
         db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta))
         if abs(delta) >= 10 and (fresh or ev["type"] not in REACT_EVENTS):
             out["notices"].append(f"{name(npc)} will remember that.")
     if ev["type"] == "gift" and item and target:
         _gift_progress(conn, player, target, item, ev["game_time"], out)
+    return out
+
+
+def react(conn, llm, world, player, event_id, npc_ids) -> dict:
+    """Spoken reactions to an already-recorded event. Memory text stays authoritative; the LLM only shouts."""
+    player = f"{world}:{player}"
+    row = conn.execute("select * from events where id=? and player=?", (event_id, player)).fetchone()
+    out = {"shouts": []}
+    if not row:
+        return out
+    details = json.loads(row["details"])
+    for npc in npc_ids:
+        if npc not in json.loads(row["witnesses"]) + [row["target"]]:
+            continue
+        what, _ = describe(row["type"], npc, row["target"], rules.short_item(details.get("item", "")))
+        ctx = build_context(conn, npc, player)
+        ctx["event"] = {"id": event_id, "type": row["type"], "what": what}
+        thread = f"{player}:{npc}:event:{event_id}"
+        res = llm.complete("npc_react", ctx, thread)
+        vres = validate("npc_react", res.data, ctx)
+        log_call(conn, "npc_react", npc, player, thread, ctx, res, vres)
+        if vres["ok"]:
+            out["shouts"].append({"npc_id": npc, "text": res.data["shout"]})
     return out
 
 

@@ -21,6 +21,9 @@ def test_event_and_npc(db_path):
     assert r.status_code == 200 and r.json()["notices"] == ["Elise will remember that."]
     s = c.get("/npc/elise", params={"world": "w", "player": "p"}).json()
     assert s["band"] == "wary" and len(s["memories"]) == 1
+    react = c.post("/react", json={"world": "w", "player": "p", "event_id": r.json()["event_id"],
+                                   "npc_ids": r.json()["react"]}).json()
+    assert react["shouts"][0]["npc_id"] == "elise"
     assert c.get("/interactions", params={"npc_id": "elise"}).json()[0]["task"] == "npc_react"
 
 
@@ -66,6 +69,7 @@ def test_event_accepts_lua_empty_tables(db_path):
 
 def test_greet(db_path):
     c = client(db_path)
-    c.post("/event", json=EV)
+    e = c.post("/event", json=EV).json()
+    c.post("/react", json={"world": "w", "player": "p", "event_id": e["event_id"], "npc_ids": e["react"]})
     r = c.post("/greet", json={"world": "w", "player": "p", "npc_id": "elise", "thread_id": "g", "game_time": 1.2})
     assert r.status_code == 200 and "the newcomer took apple from my stall without paying" in r.json()["reply"]
