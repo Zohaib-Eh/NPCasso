@@ -62,3 +62,95 @@ def test_unknown_type_raises(conn):
         record_event(conn, MockLLM(), ev("teleport"))
     with pytest.raises(ValueError):
         record_event(conn, MockLLM(), ev("theft", target="bob"))
+
+
+import json
+
+from backend.game import NEUTRAL_LINE, talk
+
+Q = {"intent": "question", "confidence": 0.5, "promise": None, "claim": None}
+
+
+def dialogue_rows(conn):
+    return [i for i in db.list_interactions(conn, "elise") if i["task"] == "npc_dialogue"]
+
+
+def test_talk_recalls_theft(conn):
+    record_event(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    r = talk(conn, MockLLM(), "w", "p", "elise", "hello", "th1", 1.1)
+    assert "I saw them: theft" in r["reply"]
+    assert dialogue_rows(conn)[0]["validator_result"]["ok"]
+
+
+def test_talk_retries_then_passes(conn):
+    bad = {"reply": "Thanks for the bread!", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
+    good = {"reply": "Hello.", "claims": []}
+    llm = ScriptedLLM([Q, bad, good])
+    r = talk(conn, llm, "w", "p", "elise", "hi", "th1", 1.0)
+    assert r["reply"] == "Hello."
+    rows = dialogue_rows(conn)
+    assert len(rows) == 2 and rows[0]["retried"] and rows[0]["prev_id"] == rows[1]["id"]
+    assert llm.calls[2][1]["validator_feedback"] == ["invented_event:99"]
+
+
+def test_talk_two_failures_neutral(conn):
+    bad = {"reply": "x", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
+    assert talk(conn, ScriptedLLM([Q, bad, bad]), "w", "p", "elise", "hi", "th1", 1.0)["reply"] == NEUTRAL_LINE
+
+
+def test_talk_malformed_llm_neutral(conn):
+    assert talk(conn, ScriptedLLM([None, None, None]), "w", "p", "elise", "hi", "th1", 1.0)["reply"] == NEUTRAL_LINE
+
+
+def test_apology_once_per_day(conn):
+    r = talk(conn, MockLLM(), "w", "p", "elise", "sorry", "t", 1.0)
+    assert r["notices"] == ["Elise noticed your apology."]
+    assert talk(conn, MockLLM(), "w", "p", "elise", "so sorry", "t", 1.2)["notices"] == []
+    assert db.get_trust(conn, "elise", "w:p") == 20
+    talk(conn, MockLLM(), "w", "p", "elise", "sorry again", "t", 2.1)
+    assert db.get_trust(conn, "elise", "w:p") == 30
+    assert conn.execute("select source, verified from events where type='apology'").fetchone()["source"] == "llm_classified"
+
+
+def test_promise_created(conn):
+    talk(conn, MockLLM(), "w", "p", "elise", "I'll bring you 2 iron tomorrow", "t", 1.0)
+    p = db.open_promises(conn, "elise", "w:p")[0]
+    assert (p["kind"], p["item"], p["count"], p["deadline"]) == ("promise", "iron", 2, 2.0)
+
+
+def test_unknown_promise_item_ignored(conn):
+    talk(conn, MockLLM(), "w", "p", "elise", "I promise 3 dragons", "t", 1.0)
+    assert db.open_promises(conn, "elise", "w:p") == []
+
+
+def test_correction_confirmed(conn):
+    talk(conn, MockLLM(), "w", "p", "elise", "hi", "t", 1.0)
+    talk(conn, MockLLM(), "w", "p", "elise", "I never gave you bread", "t", 1.1)
+    assert db.get_trust(conn, "elise", "w:p") == 15
+    assert dialogue_rows(conn)[1]["outcome"] == "corrected"
+
+
+def test_correction_rejected_when_event_true(conn):
+    record_event(conn, MockLLM(), ev("gift", details={"item": "farming:bread"}))
+    before = db.get_trust(conn, "elise", "w:p")
+    llm = MockLLM()
+    talk(conn, llm, "w", "p", "elise", "I never gave you bread", "t", 1.1)
+    assert db.get_trust(conn, "elise", "w:p") == before
+
+
+def test_low_confidence_ignored(conn):
+    t = {"intent": "threat", "confidence": 0.4, "promise": None, "claim": None}
+    talk(conn, ScriptedLLM([t, {"reply": "Hm.", "claims": []}]), "w", "p", "elise", "grr", "t", 1.0)
+    assert db.get_trust(conn, "elise", "w:p") == 10
+
+
+def test_threat_lowers_trust(conn):
+    talk(conn, MockLLM(), "w", "p", "elise", "I will burn your stall", "t", 1.0)
+    assert db.get_trust(conn, "elise", "w:p") == -5
+
+
+def test_quest_offer_recorded(conn):
+    offer = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "bread"}}
+    r = talk(conn, ScriptedLLM([Q, offer]), "w", "p", "elise", "any work?", "t", 1.0)
+    q = db.open_promises(conn, "elise", "w:p", kind="quest")[0]
+    assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["reward"]) == (2, 3.0, "bread")

@@ -5,7 +5,7 @@ import threading
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import db, game, rules
 from .llm import make_llm
@@ -21,6 +21,22 @@ class EventIn(BaseModel):
     details: dict = Field(default_factory=dict)
     witnesses: list[str] = Field(default_factory=list)
     game_time: float
+
+
+class TalkIn(BaseModel):
+    world: str
+    player: str
+    npc_id: str
+    message: str = Field(min_length=1, max_length=500)
+    thread_id: str
+    game_time: float
+
+    @field_validator("message")
+    @classmethod
+    def not_blank(cls, v):
+        if not v.strip():
+            raise ValueError("message is blank")
+        return v.strip()
 
 
 def create_app(db_path: str, llm) -> FastAPI:
@@ -47,6 +63,12 @@ def create_app(db_path: str, llm) -> FastAPI:
     def event(ev: EventIn):
         out = run(game.record_event, llm, ev.model_dump())
         log.info("event %s -> %s", ev.type, out)
+        return out
+
+    @app.post("/talk")
+    def talk(t: TalkIn):
+        out = run(game.talk, llm, t.world, t.player, t.npc_id, t.message, t.thread_id, t.game_time)
+        log.info("talk %s: %r -> %r", t.npc_id, t.message, out["reply"])
         return out
 
     @app.get("/npc/{npc_id}")

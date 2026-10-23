@@ -30,3 +30,18 @@ def test_event_unknown_type_422(db_path):
 
 def test_npcs_list(db_path):
     assert client(db_path).get("/npcs").json()["elise"] == {"name": "Elise", "role": "Merchant"}
+
+
+TALK = {"world": "w", "player": "p", "npc_id": "elise", "message": "hello", "thread_id": "t", "game_time": 1.0}
+
+
+def test_talk_ok(db_path):
+    r = client(db_path).post("/talk", json=TALK)
+    assert r.status_code == 200 and r.json()["reply"]
+
+
+def test_talk_rejects_bad_message(db_path):
+    c = client(db_path)
+    for m in ("", "   ", "x" * 501):
+        assert c.post("/talk", json={**TALK, "message": m}).status_code == 422
+    assert c.post("/talk", json={**TALK, "npc_id": "bob"}).status_code == 422

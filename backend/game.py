@@ -1,4 +1,6 @@
 """Game orchestration: events, talk, trade, tick. Owns every state change; the LLM only proposes text."""
+import json
+
 from . import db, rules
 from .validator import validate
 
@@ -78,3 +80,71 @@ def record_event(conn, llm, ev: dict) -> dict:
         if abs(delta) >= 10:
             out["notices"].append(f"{name(npc)} will remember that.")
     return out
+
+
+NEUTRAL_LINE = "Hm. Let me think on that."
+MIN_CONFIDENCE = 0.6
+
+
+def _apply_intent(conn, intent: dict, npc_id, player, game_time, notices) -> dict:
+    """Turns a classified intent into deterministic effects. Returns extra facts for the dialogue context."""
+    kind = intent.get("intent")
+    conf = intent.get("confidence") or 0
+    if kind not in ("threat", "insult", "apology", "promise", "correction") or conf < MIN_CONFIDENCE:
+        return {}
+    db.add_event(conn, {"player": player, "actor": player, "target": npc_id, "type": kind, "details": intent,
+                        "witnesses": [npc_id], "game_time": game_time, "source": "llm_classified",
+                        "verified": False, "confidence": conf})
+    if kind in ("threat", "insult"):
+        db.add_trust(conn, npc_id, player, rules.trust_delta(kind))
+    elif kind == "apology":
+        if rules.apology_allowed(db.get_flag(conn, npc_id, player, "last_apology"), game_time):
+            db.add_trust(conn, npc_id, player, rules.trust_delta("apology"))
+            db.set_flag(conn, npc_id, player, "last_apology", game_time)
+            notices.append(f"{name(npc_id)} noticed your apology.")
+    elif kind == "promise":
+        p = intent.get("promise") or {}
+        if p.get("item") in CONFIG["items"] and isinstance(p.get("count"), int) and p["count"] > 0:
+            db.add_promise(conn, "promise", npc_id, player, p["item"], p["count"],
+                           game_time + float(p.get("deadline_days") or 1))
+            return {"new_promise": {"item": p["item"], "count": p["count"]}}
+    elif kind == "correction":
+        claim = intent.get("claim") or {}
+        rows = conn.execute("select details from events where type=? and target=? and player=? and source='game'",
+                            (claim.get("type"), npc_id, player)).fetchall()
+        item = claim.get("item")
+        happened = any(item is None or rules.short_item(json.loads(r["details"]).get("item", "")) == item
+                       for r in rows)
+        if not happened:
+            db.add_trust(conn, npc_id, player, rules.trust_delta("correction_confirmed"))
+            conn.execute("update interactions set outcome='corrected' where id = (select max(id) from interactions "
+                         "where task='npc_dialogue' and npc_id=? and player=?)", (npc_id, player))
+            conn.commit()
+        return {"correction": {"confirmed": not happened, "claim": claim}}
+    return {}
+
+
+def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dict:
+    cfg, player = npc_cfg(npc_id), f"{world}:{player}"
+    notices = []
+    cin = {"npc": {"name": cfg["name"], "role": cfg["role"]}, "player_message": message}
+    cres = llm.complete("intent_classify", cin, thread_id)
+    log_call(conn, "intent_classify", npc_id, player, thread_id, cin, cres)
+    extra = _apply_intent(conn, cres.data or {}, npc_id, player, game_time, notices)
+
+    ctx = build_context(conn, npc_id, player, message, extra)
+    reply, offer, prev = NEUTRAL_LINE, None, None
+    for attempt in range(2):
+        res = llm.complete("npc_dialogue", ctx, thread_id)
+        vres = validate("npc_dialogue", res.data, ctx)
+        prev = log_call(conn, "npc_dialogue", npc_id, player, thread_id, ctx, res, vres, attempt > 0, prev)
+        if vres["ok"]:
+            reply = res.data["reply"]
+            if res.data.get("quest_offer") and not vres["drop_quest"]:
+                offer = res.data["quest_offer"]
+            break
+        ctx = {**ctx, "validator_feedback": vres["errors"]}
+    if offer:
+        db.add_promise(conn, "quest", npc_id, player, offer["item"], int(offer.get("count") or 1),
+                       game_time + 2, offer.get("reward"))
+    return {"reply": reply, "notices": notices, "quest_offer": offer}
