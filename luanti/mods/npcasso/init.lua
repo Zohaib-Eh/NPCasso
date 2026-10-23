@@ -376,8 +376,139 @@ core.register_on_joinplayer(function(player)
 	end
 	core.after(2, function()
 		local p = core.get_player_by_name(name)
-		if p and unstick(p) then core.chat_send_player(name, "[npcasso] Moved you out of the terrain.") end
+		if not p then return end
+		if unstick(p) then core.chat_send_player(name, "[npcasso] Moved you out of the terrain.") end
+		if not npcasso.village() then npcasso.build_village(p) end
 	end)
+end)
+
+-- Starter village: built once per world where the player first stands --------------------------------
+
+local store = core.get_mod_storage()
+
+function npcasso.village()
+	local s = store:get_string("village")
+	return s ~= "" and core.deserialize(s) or nil
+end
+
+local function spawn_pos(o) return vector.offset(o, 0, 0.5, -6) end
+
+local function pick(...)
+	for _, n in ipairs({...}) do
+		if core.registered_nodes[n] then return n end
+	end
+	return "air"
+end
+
+-- Village layout around origin o (o = first air node above ground, plaza centre):
+--   Elise's stall west (faces east), Rowan's forge east (faces west), Mira's inn north (door faces south),
+--   farm south-west, gravel cross paths, lamps, flowers. NPCs stand at their posts facing the plaza.
+local function layout(o)
+	local nodes = {}
+	local function put(x, y, z, name, param2)
+		nodes[#nodes + 1] = {pos = vector.offset(o, x, y, z), node = {name = name, param2 = param2 or 0}}
+	end
+	local function box(x1, y1, z1, x2, y2, z2, name)
+		for x = x1, x2 do for y = y1, y2 do for z = z1, z2 do put(x, y, z, name) end end end
+	end
+	local grass, dirt = pick("default:dirt_with_grass"), pick("default:dirt")
+	local wood, tree, cobble = pick("default:wood"), pick("default:tree"), pick("default:cobble")
+	local fence, glass, torch = pick("default:fence_wood", "default:wood"), pick("default:glass"), pick("default:torch")
+	local slab_wood, lamp = pick("stairs:slab_wood", "default:wood"), pick("default:meselamp", "default:torch")
+	local flowers = {pick("flowers:rose"), pick("flowers:tulip"), pick("flowers:dandelion_yellow"), pick("flowers:viola")}
+
+	-- Flatten a 37x37 area: clear above, grass on top, dirt below.
+	box(-18, 0, -18, 18, 14, 18, "air")
+	box(-18, -4, -18, 18, -2, 18, dirt)
+	box(-18, -1, -18, 18, -1, 18, grass)
+	-- Paths
+	box(-1, -1, -16, 1, -1, 16, pick("default:gravel"))
+	box(-16, -1, -1, 16, -1, 1, pick("default:gravel"))
+
+	-- Elise's fruit stall (west)
+	for _, c in ipairs({{-9, -2}, {-9, 2}, {-6, -2}, {-6, 2}}) do box(c[1], 0, c[2], c[1], 2, c[2], tree) end
+	box(-9, 3, -2, -6, 3, 2, slab_wood)
+	box(-6, 0, -1, -6, 0, 1, fence)
+	put(-5, 0, -1, "npcasso:apple_crate")   -- in front: Elise sees you take it
+	put(-11, 0, 0, "npcasso:apple_crate")   -- behind her back: she doesn't
+
+	-- Rowan's forge (east)
+	box(10, 0, -3, 10, 3, 3, cobble)
+	box(6, 0, -3, 10, 3, -3, cobble)
+	box(6, 0, 3, 10, 3, 3, cobble)
+	box(6, 4, -3, 10, 4, 3, cobble)
+	put(9, 0, -2, pick("default:furnace"))
+	put(8, 0, 1, pick("cottages:anvil", "npcasso:anvil"))
+	put(9, 0, 2, torch, 1)
+
+	-- Mira's inn (north)
+	box(-4, -1, 8, 4, -1, 14, wood)
+	box(-4, 0, 8, 4, 3, 8, wood)
+	box(-4, 0, 14, 4, 3, 14, wood)
+	box(-4, 0, 8, -4, 3, 14, wood)
+	box(4, 0, 8, 4, 3, 14, wood)
+	box(-4, 4, 8, 4, 4, 14, slab_wood)
+	box(0, 0, 8, 0, 1, 8, "air")                         -- door
+	for _, z in ipairs({10, 12}) do put(-4, 1, z, glass); put(4, 1, z, glass) end
+	put(-2, 1, 8, glass); put(2, 1, 8, glass)
+	local bed_b, bed_t = pick("beds:bed_bottom"), pick("beds:bed_top")
+	if bed_b ~= "air" then
+		for _, x in ipairs({-3, 3}) do put(x, 0, 12, bed_b, 0); put(x, 0, 13, bed_t, 0) end
+	end
+	put(0, 3, 11, lamp)
+	put(-1, 0, 7, torch, 1); put(1, 0, 7, torch, 1)
+
+	-- Farm (south-west) with a water source in the middle
+	box(-14, -1, -14, -8, -1, -8, pick("farming:soil_wet", "default:dirt"))
+	box(-14, 0, -14, -8, 0, -8, pick("farming:wheat_8", "air"))
+	put(-11, -1, -11, pick("default:water_source")); put(-11, 0, -11, "air")
+
+	-- Lamp posts on the plaza corners
+	for _, c in ipairs({{3, 3}, {-3, 3}, {3, -3}, {-3, -3}}) do
+		box(c[1], 0, c[2], c[1], 1, c[2], fence)
+		put(c[1], 2, c[2], lamp)
+	end
+	-- Flowers along the edges (deterministic, so every world looks the same)
+	for i = -16, 16, 3 do
+		for _, z in ipairs({-17, 17}) do put(i, 0, z, flowers[(i % 4) + 1]) end
+		for _, x in ipairs({-17, 17}) do put(x, 0, i, flowers[((i + 1) % 4) + 1]) end
+	end
+	return nodes
+end
+
+-- Where each NPC stands and which way they face (yaw: 0 = +z, pi/2 = -x, -pi/2 = +x, pi = -z).
+local POSTS = {
+	elise = {x = -8, z = 0, yaw = -math.pi / 2},
+	rowan = {x = 7, z = 0, yaw = math.pi / 2},
+	mira = {x = 0, z = 6, yaw = math.pi},
+}
+
+function npcasso.build_village(player)
+	local o = vector.round(player:get_pos())
+	local name = player:get_player_name()
+	core.chat_send_player(name, "[npcasso] Building the village...")
+	core.emerge_area(vector.offset(o, -20, -6, -20), vector.offset(o, 20, 16, 20), function(_, _, remaining)
+		if remaining > 0 then return end
+		for _, n in ipairs(layout(o)) do core.set_node(n.pos, n.node) end
+		for id, post in pairs(POSTS) do
+			core.add_entity(vector.offset(o, post.x, 0.5, post.z), "npcasso:npc",
+				core.serialize({npc_id = id, yaw = post.yaw}))
+		end
+		store:set_string("village", core.serialize(o))
+		local p = core.get_player_by_name(name)
+		if p then
+			p:set_pos(spawn_pos(o))
+			p:set_look_horizontal(0)
+		end
+		core.chat_send_player(name, "[npcasso] Welcome to the village. /npcasso home brings you back here.")
+	end)
+end
+
+core.register_on_respawnplayer(function(player)
+	local o = npcasso.village()
+	if not o then return false end
+	player:set_pos(spawn_pos(o))
+	return true
 end)
 
 -- Commands -----------------------------------------------------------------------------------------
@@ -401,13 +532,22 @@ end
 core.after(1, load_until_ready)
 
 core.register_chatcommand("npcasso", {
-	params = "spawn <npc_id> | remove | debug | reload | unstuck",
+	params = "home | village | spawn <npc_id> | remove | debug | reload | unstuck",
 	description = "NPCasso tools",
 	privs = {server = true},
 	func = function(name, param)
 		local player = core.get_player_by_name(name)
 		local cmd, arg = param:match("^(%S*)%s*(%S*)")
-		if cmd == "unstuck" then
+		if cmd == "home" then
+			local o = npcasso.village()
+			if not o then return false, "No village yet." end
+			player:set_pos(spawn_pos(o))
+			return true, "Welcome back."
+		elseif cmd == "village" then
+			store:set_string("village", "")
+			npcasso.build_village(player)
+			return true
+		elseif cmd == "unstuck" then
 			return true, unstick(player) and "Moved you to open ground." or "You're already standing free (or no ground above)."
 		elseif cmd == "spawn" then
 			if not npcasso.npcs[arg] then return false, "Unknown NPC. Known: " .. table.concat((function()
@@ -452,6 +592,6 @@ core.register_chatcommand("npcasso", {
 			step(1)
 			return true
 		end
-		return false, "Usage: /npcasso " .. "spawn <npc_id> | remove | debug | reload | unstuck"
+		return false, "Usage: /npcasso " .. "home | village | spawn <npc_id> | remove | debug | reload | unstuck"
 	end,
 })
