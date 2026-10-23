@@ -8,7 +8,9 @@
     "bread": "farming:bread",
     "flower": "flowers:rose",
     "gold_apple": "default:gold_ingot",
-    "pickaxe": "default:pick_steel"
+    "pickaxe": "default:pick_steel",
+    "seeds": "farming:seed_wheat",
+    "hoe": "farming:hoe_wood"
   },
   "deltas": {
     "theft": -30,
@@ -27,7 +29,8 @@
     "quest_done": 20,
     "quest_failed": -10,
     "correction_confirmed": 5,
-    "trade": 2
+    "trade": 2,
+    "return": 10
   },
   "npcs": {
     "elise": {
@@ -51,7 +54,11 @@
         "cost": "iron",
         "base_price": 1
       },
-      "skin": "character_2.png"
+      "skin": "character_2.png",
+      "expertise": [
+        "Apples grow on apple trees and fall when you break the leaves.",
+        "A wooden hoe is two planks and two sticks on the crafting grid."
+      ]
     },
     "rowan": {
       "name": "Rowan",
@@ -74,7 +81,11 @@
         "base_price": 3
       },
       "work_block": "cottages:anvil",
-      "skin": "character_5.png"
+      "skin": "character_5.png",
+      "expertise": [
+        "A stone pickaxe is three cobblestone above two sticks; a steel one needs three iron ingots.",
+        "Coal ore sits in stone and fuels any furnace."
+      ]
     },
     "mira": {
       "name": "Mira",
@@ -95,7 +106,19 @@
         "cost": "apple",
         "base_price": 2
       },
-      "skin": "character_8.png"
+      "skin": "character_8.png",
+      "expertise": [
+        "Sleep in a bed at night to skip to morning.",
+        "Everyone in the village talks; what one person sees, the others hear about."
+      ]
     }
-  }
+  },
+  "world_knowledge": [
+    "Trades: Elise the merchant sells apples for iron ingots; Rowan the blacksmith sells steel pickaxes for iron ingots; Mira the innkeeper sells bread for apples.",
+    "Iron: mine iron ore from stone with a pickaxe, then smelt it in a furnace (with coal) into iron ingots.",
+    "Farming: make a hoe, till dirt or grass close to water, plant wheat seeds (cut tall grass to find them), and harvest the wheat once it turns golden.",
+    "Bread: grind wheat into flour on the crafting grid, then bake the flour in a furnace.",
+    "Crafting: open your inventory with I and use the crafting grid; tree trunks make wooden planks and planks make sticks.",
+    "The village: Elise's fruit stall is west of the square, Rowan's forge east, Mira's inn north, the wheat farm south-west."
+  ]
 }

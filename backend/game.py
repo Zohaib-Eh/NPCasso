@@ -6,9 +6,10 @@ from . import db, rules
 from .validator import validate
 
 CONFIG = db.load_config()
-GAME_EVENTS = {"theft", "gift", "vandalism", "repair", "hit_npc", "trade", "walk_away"}
+GAME_EVENTS = {"theft", "gift", "vandalism", "repair", "hit_npc", "trade", "walk_away", "return"}
 REACT_EVENTS = {"theft", "vandalism", "hit_npc"}
-TARGET_KNOWS = {"gift", "hit_npc", "trade"}
+TARGET_KNOWS = {"gift", "hit_npc", "trade", "return"}
+SPECIAL_NOTICE = {"return": "{name} noticed you put it back."}
 REACT_COOLDOWN_S = 5  # spam-clicking records every event but the NPC reacts (LLM call + notice) once
 
 
@@ -30,7 +31,8 @@ def build_context(conn, npc_id, player, message=None, extra_facts=None) -> dict:
         "npc": {k: cfg[k] for k in ("name", "role", "persona", "background", "loves", "likes", "dislikes")},
         "relationship": {"band": rules.band(db.get_trust(conn, npc_id, player))},
         "memories": db.top_memories(conn, npc_id, player),
-        "facts": {"open_promises": [strip(p) for p in promises if p["kind"] == "promise"],
+        "facts": {"world": CONFIG.get("world_knowledge", []) + cfg.get("expertise", []),
+                  "open_promises": [strip(p) for p in promises if p["kind"] == "promise"],
                   "open_quests": [strip(p) for p in promises if p["kind"] == "quest"], **(extra_facts or {})},
         "items": list(CONFIG["items"]),
         "player_message": message,
@@ -57,6 +59,7 @@ def describe(type, npc, target, item) -> tuple[str, str]:
         "hit_npc": f"the newcomer hit {you}",
         "gift": f"the newcomer gave {you} {thing}",
         "trade": f"the newcomer traded with {you}",
+        "return": f"the newcomer put {thing} back in {whose} stall",
     }.get(type, f"{type} by the newcomer")
     memory = what.replace(" your ", " my ").replace(" you", " me")
     return what, memory
@@ -89,7 +92,8 @@ def record_event(conn, llm, ev: dict) -> dict:
             out["react"].append(npc)  # the game asks for the spoken reaction separately, so this returns at once
         db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta))
         if abs(delta) >= 10 and (fresh or ev["type"] not in REACT_EVENTS):
-            out["notices"].append(f"{name(npc)} will remember that.")
+            notice = SPECIAL_NOTICE.get(ev["type"], "{name} will remember that.")
+            out["notices"].append(notice.format(name=name(npc)))
     if ev["type"] == "gift" and item and target:
         _gift_progress(conn, player, target, item, ev["game_time"], out)
     return out

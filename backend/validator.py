@@ -1,8 +1,10 @@
 """Deterministic check of an NPC output against what that NPC actually knows."""
 import re
 
-EVENT_WORDS = ("stole", "steal", "stolen", "theft", "thief", "gift", "gave", "broke", "smashed", "hit", "promise",
-               "promised")
+# Words that assert a past event: an error without a claim. Words common in advice ("a gift of flowers",
+# "hit the stone") only get flagged.
+EVENT_WORDS = ("stole", "steal", "stolen", "theft", "thief", "gave", "broke", "smashed", "promise", "promised")
+SOFT_WORDS = ("gift", "hit")
 WARM_WORDS = ("friend", "dear", "lovely", "glad", "welcome")
 TEXT_KEY = {"npc_dialogue": "reply", "npc_react": "shout"}
 
@@ -33,6 +35,7 @@ def validate(task: str, output: dict | None, context: dict) -> dict:
         # Dialogue must back every event it mentions with a claim; a reaction is about the event itself.
         res["errors" if task == "npc_dialogue" else "flags"] += [f"unclaimed_mention:{w}" for w in EVENT_WORDS
                                                                  if w in words]
+        res["flags"] += [f"unclaimed_mention:{w}" for w in SOFT_WORDS if w in words]
     if context.get("relationship", {}).get("band") in ("hostile", "wary") and words & set(WARM_WORDS):
         res["flags"].append("tone_mismatch")
 

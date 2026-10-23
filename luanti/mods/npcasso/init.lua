@@ -487,8 +487,10 @@ core.register_on_leaveplayer(function(player) talk[player:get_player_name()] = n
 
 -- World actions ------------------------------------------------------------------------------------
 
+local RETURNABLE = {["default:apple"] = true, ["farming:bread"] = true}
+
 -- Elise's stock chest: opens like a Minecraft chest. Taking anything out is theft; she may or may not see it.
-local CRATE_FS = "size[8,8.5]label[0,0;Elise's stock (not yours)]list[context;main;0,0.5;8,2;]" ..
+local CRATE_FS = "size[8,8.5]label[0,0;Elise's stock (not yours - put things back to make amends)]list[context;main;0,0.5;8,2;]" ..
 	"list[current_player;main;0,3.85;8,1;]list[current_player;main;0,5.08;8,3;8]" ..
 	"listring[context;main]listring[current_player;main]"
 
@@ -511,7 +513,13 @@ core.register_node("npcasso:apple_crate", {
 	paramtype2 = "facedir",
 	groups = {choppy = 2, oddly_breakable_by_hand = 2},
 	on_construct = stock_crate,
-	allow_metadata_inventory_put = function() return 0 end,
+	allow_metadata_inventory_put = function(pos, listname, index, stack)
+		return RETURNABLE[stack:get_name()] and stack:get_count() or 0
+	end,
+	on_metadata_inventory_put = function(pos, listname, index, stack, player)
+		if not player or not player:is_player() then return end
+		npcasso.event(player, "return", "elise", {item = stack:get_name(), count = stack:get_count()}, {})
+	end,
 	allow_metadata_inventory_move = function() return 0 end,
 	on_metadata_inventory_take = function(pos, listname, index, stack, player)
 		if not player or not player:is_player() then return end
@@ -609,9 +617,77 @@ core.register_on_joinplayer(function(player)
 		local p = core.get_player_by_name(name)
 		if not p then return end
 		if unstick(p) then core.chat_send_player(name, "[npcasso] Moved you out of the terrain.") end
-		if not npcasso.village() then npcasso.build_village(p) end
+		if not npcasso.village() then npcasso.build_village(p) else npcasso.give_starter_kit(p) end
 	end)
 end)
+
+-- Village Guide: the in-game tutorial -------------------------------------------------------------
+
+local GUIDE = {
+	{"Start", "<big><b>Welcome to the village</b></big>\n\n" ..
+		"The villagers here are not background characters. They <b>remember</b> what you do to them, " ..
+		"they judge you for it, and they <b>talk to each other</b>.\n\n" ..
+		"<b>Move</b> W A S D   <b>Jump</b> Space   <b>Inventory</b> I\n" ..
+		"<b>Fly</b> K, then Space / Shift   <b>Fast</b> J   <b>Lost?</b> /npcasso home\n\n" ..
+		"<b>Talk</b>: right-click a villager and type anything. Ask them how things work - they know."},
+	{"Farming", "<big><b>Growing wheat and baking bread</b></big>\n\n" ..
+		"1. Hold the <b>hoe</b> (in your starter kit) and left-click dirt or grass <b>near water</b> to till it.\n" ..
+		"2. Right-click the tilled soil with <b>wheat seeds</b> to plant. Cut tall grass to find more seeds.\n" ..
+		"3. Wait until the wheat turns <b>golden</b>, then break it to harvest wheat (and seeds).\n" ..
+		"4. Put wheat in the crafting grid (I) to make <b>flour</b>.\n" ..
+		"5. Bake flour in a <b>furnace</b> to get <b>bread</b>.\n\n" ..
+		"There is a ready farm south-west of the square with water in the middle."},
+	{"Trading", "<big><b>Trading</b></big>\n\n" ..
+		"Talk to a villager and press <b>Trade</b>.\n" ..
+		"Elise: apples for iron ingots.  Rowan: steel pickaxes for iron.  Mira: bread for apples.\n\n" ..
+		"<b>Prices depend on how they feel about you.</b> You will never see a number - you will see it in " ..
+		"their prices, their tone, and whether they serve you at all.\n\n" ..
+		"Iron: mine iron ore with a pickaxe and smelt it in a furnace with coal."},
+	{"Villagers", "<big><b>Living with people who remember</b></big>\n\n" ..
+		"<b>Elise</b> (fruit stall, west) - honest, careful. Taking from her chest is theft if she sees you.\n" ..
+		"<b>Rowan</b> (forge, east) - blunt and proud. Don't touch his anvil.\n" ..
+		"<b>Mira</b> (inn, north) - hears everything. Rumours start with her.\n\n" ..
+		"<b>Making amends</b>: apologise, put stolen things back in Elise's chest, keep your promises, " ..
+		"bring gifts they love (ask them what they like).\n\n" ..
+		"When you see <b>\"... will remember that.\"</b>, it stuck."},
+}
+
+function npcasso.show_guide(name, tab)
+	tab = tonumber(tab) or 1
+	local titles = {}
+	for _, g in ipairs(GUIDE) do table.insert(titles, g[1]) end
+	core.show_formspec(name, "npcasso:guide", "formspec_version[6]size[13,10]" ..
+		"tabheader[0,0;guide_tab;" .. table.concat(titles, ",") .. ";" .. tab .. ";false;true]" ..
+		"box[0.3,0.3;12.4,8.4;#00000055]" ..
+		"hypertext[0.6,0.5;11.8,8;text;" .. core.formspec_escape("<global color=#EEEEEE size=17>" .. GUIDE[tab][2]) .. "]" ..
+		"style_type[button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]button_exit[4.75,8.95;3.5,0.8;close;Got it]")
+end
+
+core.register_on_player_receive_fields(function(player, formname, fields)
+	if formname ~= "npcasso:guide" then return end
+	if fields.guide_tab then npcasso.show_guide(player:get_player_name(), fields.guide_tab) end
+	return true
+end)
+
+core.register_craftitem("npcasso:guide", {
+	description = "Village Guide",
+	inventory_image = "default_book.png",
+	stack_max = 1,
+	on_use = function(itemstack, user)
+		if user and user:is_player() then npcasso.show_guide(user:get_player_name()) end
+	end,
+})
+
+function npcasso.give_starter_kit(player)
+	local key = "kit_" .. player:get_player_name()
+	if store:get_string(key) ~= "" then return end
+	store:set_string(key, "1")
+	local inv = player:get_inventory()
+	for _, item in ipairs({"npcasso:guide", "farming:hoe_wood", "farming:seed_wheat 10", "default:steel_ingot 6",
+			"farming:bread 3", "default:torch 10"}) do
+		if core.registered_items[ItemStack(item):get_name()] then inv:add_item("main", item) end
+	end
+end
 
 -- Starter village: built once per world where the player first stands --------------------------------
 
@@ -730,6 +806,10 @@ function npcasso.build_village(player)
 			p:set_look_horizontal(0)
 		end
 		core.chat_send_player(name, "[npcasso] Welcome to the village. /npcasso home brings you back here.")
+		if p then
+			npcasso.give_starter_kit(p)
+			core.after(1, npcasso.show_guide, name, 1)
+		end
 	end)
 end
 
@@ -761,13 +841,16 @@ end
 core.after(1, load_until_ready)
 
 core.register_chatcommand("npcasso", {
-	params = "home | village | spawn <npc_id> | remove | debug | reload | unstuck",
+	params = "guide | home | village | spawn <npc_id> | remove | debug | reload | unstuck",
 	description = "NPCasso tools",
 	privs = {server = true},
 	func = function(name, param)
 		local player = core.get_player_by_name(name)
 		local cmd, arg = param:match("^(%S*)%s*(%S*)")
-		if cmd == "home" then
+		if cmd == "guide" then
+			npcasso.show_guide(name)
+			return true
+		elseif cmd == "home" then
 			local o = npcasso.village()
 			if not o then return false, "No village yet." end
 			player:set_pos(spawn_pos(o))
@@ -821,6 +904,6 @@ core.register_chatcommand("npcasso", {
 			step(1)
 			return true
 		end
-		return false, "Usage: /npcasso " .. "home | village | spawn <npc_id> | remove | debug | reload | unstuck"
+		return false, "Usage: /npcasso " .. "guide | home | village | spawn <npc_id> | remove | debug | reload | unstuck"
 	end,
 })

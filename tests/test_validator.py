@@ -48,9 +48,14 @@ def test_react_needs_shout():
 
 
 def test_unclaimed_mention_is_error():
-    r = v({"reply": "Thanks for the gift.", "claims": []})
-    assert not r["ok"] and "unclaimed_mention:gift" in r["errors"]
+    r = v({"reply": "Thanks for the bread you gave me.", "claims": []})
+    assert not r["ok"] and "unclaimed_mention:gave" in r["errors"]
     assert "unclaimed_mention:promise" in v({"reply": "You kept your promise!", "claims": []})["errors"]
+
+
+def test_advice_words_only_flag():
+    r = v({"reply": "Mira loves a gift of flowers. Hit stone with a pickaxe.", "claims": []})
+    assert r["ok"] and "unclaimed_mention:gift" in r["flags"] and "unclaimed_mention:hit" in r["flags"]
 
 
 def test_event_words_fine_when_claimed():

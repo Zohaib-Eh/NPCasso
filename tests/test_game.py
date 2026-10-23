@@ -302,3 +302,18 @@ def test_record_event_makes_no_llm_call(conn):
     llm = ScriptedLLM([])
     r = record_event(conn, llm, ev("theft", witnesses=["elise", "mira"]))
     assert llm.calls == [] and r["react"] == ["elise", "mira"] and r["notices"]
+
+
+def test_returning_stolen_goods(conn):
+    r = record_event(conn, MockLLM(), ev("return", details={"item": "default:apple", "count": 3}))
+    assert db.get_trust(conn, "elise", "w:p") == 20
+    assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer put apple back in my stall"
+    assert r["notices"] == ["Elise noticed you put it back."]
+
+
+def test_context_has_world_knowledge(conn):
+    from backend.game import build_context
+    rowan = build_context(conn, "rowan", "w:p")["facts"]["world"]
+    elise = build_context(conn, "elise", "w:p")["facts"]["world"]
+    assert any("hoe" in k for k in elise) and any("iron" in k for k in rowan)
+    assert any("Elise" in k for k in rowan)  # everyone knows who trades what
