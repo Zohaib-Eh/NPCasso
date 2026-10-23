@@ -22,6 +22,25 @@ class EventIn(BaseModel):
     witnesses: list[str] = Field(default_factory=list)
     game_time: float
 
+    # Lua's JSON writer turns an empty table into {} or null, never [].
+    @field_validator("witnesses", mode="before")
+    @classmethod
+    def lua_empty_list(cls, v):
+        return v if isinstance(v, list) else []
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def lua_empty_dict(cls, v):
+        return v if isinstance(v, dict) else {}
+
+
+class GreetIn(BaseModel):
+    world: str
+    player: str
+    npc_id: str
+    thread_id: str
+    game_time: float
+
 
 class TalkIn(BaseModel):
     world: str
@@ -83,6 +102,12 @@ def create_app(db_path: str, llm) -> FastAPI:
     def talk(t: TalkIn):
         out = run(game.talk, llm, t.world, t.player, t.npc_id, t.message, t.thread_id, t.game_time)
         log.info("talk %s: %r -> %r", t.npc_id, t.message, out["reply"])
+        return out
+
+    @app.post("/greet")
+    def greet(g: GreetIn):
+        out = run(game.greet, llm, g.world, g.player, g.npc_id, g.thread_id, g.game_time)
+        log.info("greet %s -> %r", g.npc_id, out["reply"])
         return out
 
     @app.post("/trade")

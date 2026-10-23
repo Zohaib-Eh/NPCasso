@@ -255,3 +255,20 @@ def test_no_retry_after_llm_error(conn):
     llm = ScriptedLLM([Q, None, {"reply": "late", "claims": []}])
     assert talk(conn, llm, "w", "p", "elise", "hi", "t", 1.0)["reply"] == NEUTRAL_LINE
     assert len([c for c in llm.calls if c[0] == "npc_dialogue"]) == 1
+
+
+from backend.game import greet
+
+
+def test_greet_uses_dialogue_task_without_player_message(conn):
+    llm = ScriptedLLM([{"reply": "Oh. It's you.", "claims": []}])
+    r = greet(conn, llm, "w", "p", "elise", "g", 1.0)
+    assert r["reply"] == "Oh. It's you."
+    task, user = llm.calls[0]
+    assert task == "npc_dialogue" and user["player_message"] is None
+    assert user["facts"]["situation"] == "the player walks up to you; speak first"
+
+
+def test_greet_invalid_returns_empty(conn):
+    bad = {"reply": "x", "claims": [{"event_id": 5, "type": "gift", "how": "witnessed"}]}
+    assert greet(conn, ScriptedLLM([bad]), "w", "p", "elise", "g", 1.0)["reply"] == ""

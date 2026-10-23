@@ -97,7 +97,8 @@ function npcasso.witnesses(pos)
 		local npos = e.object:get_pos()
 		local neye = vector.offset(npos, 0, 1.5, 0)
 		local dir = vector.normalize({x = pos.x - npos.x, y = 0, z = pos.z - npos.z})
-		local face = {x = -math.sin(e.post_yaw), y = 0, z = math.cos(e.post_yaw)}
+		local yaw = e.object:get_yaw()
+		local face = {x = -math.sin(yaw), y = 0, z = math.cos(yaw)}
 		local close = vector.distance(pos, npos) < 1.5
 		if core.line_of_sight(neye, eye) and (close or vector.dot(dir, face) > WITNESS_COS) then
 			table.insert(seen, e.npc_id)
@@ -115,6 +116,16 @@ local function set_look(self)
 	})
 end
 
+local ANIM_STAND, ANIM_WALK = {x = 0, y = 79}, {x = 168, y = 187}
+local WANDER, WALK_SPEED, GREET_RANGE, GREET_COOLDOWN = 3, 1.2, 5, 180
+
+local function stop(self)
+	local v = self.object:get_velocity()
+	self.object:set_velocity({x = 0, y = v.y, z = 0})
+	if self.target then self.object:set_animation(ANIM_STAND, 30, 0) end
+	self.target = nil
+end
+
 core.register_entity("npcasso:npc", {
 	initial_properties = {
 		physical = true, collide_with_objects = true, visual = "mesh", mesh = "character.b3d",
@@ -124,29 +135,77 @@ core.register_entity("npcasso:npc", {
 	on_activate = function(self, staticdata)
 		local d = core.deserialize(staticdata) or {}
 		self.npc_id, self.post_yaw = d.npc_id, d.yaw or 0
+		self.home = d.home or vector.round(self.object:get_pos())
+		self.greeted, self.rest = {}, math.random(2, 6)
 		self.object:set_armor_groups({immortal = 1})
 		self.object:set_acceleration({x = 0, y = -9.81, z = 0})
 		self.object:set_yaw(self.post_yaw)
-		self.object:set_animation({x = 0, y = 79}, 30, 0)
+		self.object:set_animation(ANIM_STAND, 30, 0)
 		set_look(self)
 	end,
 	get_staticdata = function(self)
-		return core.serialize({npc_id = self.npc_id, yaw = self.post_yaw})
+		return core.serialize({npc_id = self.npc_id, yaw = self.post_yaw, home = self.home})
 	end,
 	on_step = function(self, dtime)
-		-- Face the player while talking, otherwise return to the post's facing.
 		self.timer = (self.timer or 0) + dtime
-		if self.timer < 0.5 then return end
+		if self.timer < 0.25 then return end
+		local dt = self.timer
 		self.timer = 0
-		local yaw = self.post_yaw
+		local pos = self.object:get_pos()
+
+		-- Talking: stop and face the player.
 		for name, t in pairs(talk) do
 			local p = core.get_player_by_name(name)
 			if t.npc == self.npc_id and p then
-				local d = vector.subtract(p:get_pos(), self.object:get_pos())
-				yaw = math.atan2(-d.x, d.z)
+				stop(self)
+				local d = vector.subtract(p:get_pos(), pos)
+				self.object:set_yaw(math.atan2(-d.x, d.z))
+				return
 			end
 		end
-		self.object:set_yaw(yaw)
+
+		-- Greet players who walk up, once every few minutes each.
+		for _, p in ipairs(core.get_connected_players()) do
+			local name = p:get_player_name()
+			if vector.distance(p:get_pos(), pos) < GREET_RANGE and os.time() - (self.greeted[name] or 0) > GREET_COOLDOWN then
+				self.greeted[name] = os.time()
+				stop(self)
+				local d = vector.subtract(p:get_pos(), pos)
+				self.object:set_yaw(math.atan2(-d.x, d.z))
+				self.rest = 6
+				npcasso.post("/greet", {world = npcasso.world(), player = name, npc_id = self.npc_id,
+					thread_id = npcasso.world() .. ":" .. name .. ":" .. self.npc_id .. ":greet:" .. os.time(),
+					game_time = npcasso.game_time()}, function(out)
+					if out and out.reply ~= "" and not talk[name] then
+						core.chat_send_player(name, core.colorize("#FFD27F", "<" .. npc_name(self.npc_id) .. "> ") .. out.reply)
+					end
+				end)
+			end
+		end
+
+		-- Wander: walk to a spot near home, rest, repeat. Resting at home faces the post direction.
+		if self.target then
+			local d = vector.subtract(self.target, pos)
+			d.y = 0
+			if vector.length(d) < 0.4 or (self.walked or 0) > 8 then
+				stop(self)
+				if vector.distance(self.target, self.home) < 0.5 then self.object:set_yaw(self.post_yaw) end
+				self.target, self.rest = nil, math.random(4, 10)
+			else
+				local v = vector.multiply(vector.normalize(d), WALK_SPEED)
+				self.object:set_velocity({x = v.x, y = self.object:get_velocity().y, z = v.z})
+				self.object:set_yaw(math.atan2(-d.x, d.z))
+				self.walked = (self.walked or 0) + dt
+			end
+		else
+			self.rest = self.rest - dt
+			if self.rest <= 0 then
+				self.target = math.random() < 0.4 and self.home
+					or vector.offset(self.home, math.random(-WANDER, WANDER), 0, math.random(-WANDER, WANDER))
+				self.walked = 0
+				self.object:set_animation(ANIM_WALK, 30, 0)
+			end
+		end
 	end,
 	on_rightclick = function(self, clicker)
 		npcasso.open_talk(clicker, self.npc_id)

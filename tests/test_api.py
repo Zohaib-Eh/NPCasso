@@ -53,3 +53,19 @@ def test_trade_and_tick_routes(db_path):
     c = client(db_path)
     assert c.post("/trade", json={"world": "w", "player": "p", "npc_id": "elise", "work_block_present": True}).json()["ok"]
     assert c.post("/tick", json={"world": "w", "player": "p", "game_time": 1.0}).json() == {"notices": [], "shouts": []}
+
+
+def test_event_accepts_lua_empty_tables(db_path):
+    c = client(db_path)
+    for empty in ({}, None):
+        r = c.post("/event", json={**EV, "type": "gift", "witnesses": empty, "details": {"item": "flowers:rose"}})
+        assert r.status_code == 200, r.text
+    r = c.post("/event", json={**EV, "type": "walk_away", "witnesses": {}, "details": []})
+    assert r.status_code == 200, r.text
+
+
+def test_greet(db_path):
+    c = client(db_path)
+    c.post("/event", json=EV)
+    r = c.post("/greet", json={"world": "w", "player": "p", "npc_id": "elise", "thread_id": "g", "game_time": 1.2})
+    assert r.status_code == 200 and "I saw them: theft" in r.json()["reply"]

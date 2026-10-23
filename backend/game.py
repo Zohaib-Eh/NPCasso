@@ -115,6 +115,19 @@ def _gift_progress(conn, player, npc_id, item, game_time, out):
         return  # one gift settles one promise
 
 
+GREET_SITUATION = "the player walks up to you; speak first"
+
+
+def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
+    """NPC speaks first when the player approaches. Same npc_dialogue task, no player message."""
+    player = f"{world}:{player}"
+    ctx = build_context(conn, npc_id, player, None, {"situation": GREET_SITUATION})
+    res = llm.complete("npc_dialogue", ctx, thread_id)
+    vres = validate("npc_dialogue", res.data, ctx)
+    log_call(conn, "npc_dialogue", npc_id, player, thread_id, ctx, res, vres)
+    return {"reply": res.data["reply"] if vres["ok"] else ""}
+
+
 def trade_quote(conn, world, player, npc_id, work_block_present: bool) -> dict:
     terms = rules.trade_terms(npc_cfg(npc_id), db.get_trust(conn, npc_id, f"{world}:{player}"), work_block_present)
     if terms["ok"]:

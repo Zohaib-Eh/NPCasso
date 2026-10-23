@@ -29,7 +29,8 @@ SYSTEM_PROMPTS = {
     "promise is set only when the player commits to bring something (item as a short lowercase noun, "
     "deadline_days default 1). claim is set only for correction: the event the player says did NOT happen "
     "(type one of gift, theft, vandalism, hit_npc, trade).",
-    "npc_dialogue": _RULES + "Reply to player_message. facts may include new_promise (the player just promised "
+    "npc_dialogue": _RULES + "Reply to player_message; if it is null, speak first as facts.situation says, "
+    "greeting the player in a way that reflects your memories and how you feel. facts may include new_promise (the player just promised "
     "something) or correction (confirmed=true means the player rightly corrected you; apologise for the mistake; "
     "confirmed=false means the player denies something that really happened). You may offer a small quest using "
     "only item names from items. Reply with JSON only: "
