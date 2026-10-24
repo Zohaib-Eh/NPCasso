@@ -63,7 +63,7 @@ A dilemma is a collision between what one villager **trusts you with** and what 
 
 `keep_secret`, `reveal_to(npc)`, `reveal_publicly`, `give_own(item, to)`, `take(item, from, to)`, `persuade(holder)` (risky: success decided by the game from trust and dimensions, not the LLM), `confront(npc)`, `forgive(npc)`, `walk_away`.
 
-**Reconciliation** *(builder's call)*: a dilemma whose options include `forgive(npc)` is a reconciliation offer. This covers a villager who wronged the player or a villager apologising. Choosing `confront` or `walk_away` on it adds 1 to `chaos_marks`. The game marks a dilemma as a reconciliation by checking for a `forgive` option, so `dilemma_propose` needs no extra field. Once the player has wronged at least one villager, the prompt asks for a reconciliation offer at least every other dilemma.
+**Reconciliation** *(builder's call)*: a dilemma whose options include `forgive(npc)` is a reconciliation offer. This covers a villager who wronged the player or a villager apologising. Choosing `confront` or `walk_away` on it adds 1 to `chaos_marks`. Choosing `walk_away` on any dilemma before its deadline, or breaking a commitment to step back, adds 1 to `withdraw_marks`. Withdrawal is the quiet road to Ending 4; wrath is the road to Ending 5. The game marks a dilemma as a reconciliation by checking for a `forgive` option, so `dilemma_propose` needs no extra field. Once the player has wronged at least one villager, the prompt asks for a reconciliation offer at least every other dilemma.
 
 ### Resources and life *(builder's call)*
 
@@ -115,14 +115,14 @@ There is no LLM in this step.
 | 1. The Names We Buried | Candor +, Bravery +, Loyalty + |
 | 2. The Last Place at the Table | Compassion +, Selflessness +, Loyalty + |
 | 3. The Peace You Made | Ambition +, Pragmatism +, Ingenuity + |
-| 4. The Road That Goes On (self-exile; the opposite of Chaos) | Independence +, Forgiveness +, Compassion +, Ambition − |
+| 4. The Road That Goes On (self-exile; Chaos's sibling: the same weariness with the world, turned inward and with less wrath) | Independence +, Ambition −, Loyalty −, plus ≥ 2 voluntary withdrawals (`withdraw_marks`) |
 | 5. The End of All Things (chaos) | Forgiveness −, Compassion −, Independence +, plus ≥ 2 rejected reconciliations (`chaos_marks`) |
 
 ### Convergence (the steer)
 
 - The match score for each ending is the mean of the confidence-weighted evidence on its signature dimensions, with signs applied.
 - **Open phase:** until at least 6 dilemmas are resolved, `dilemma_propose` gets no ending information at all. It also stays blind in the converging phase until a destination is set *(builder's call; the player wants no nudging, only a late steer)*.
-- **Converging phase:** from then on, if the top ending leads the next by a clear margin (builder tunes it; start at 0.15) and its score is > 0, that ending becomes the **destination**. Chaos additionally requires `chaos_marks` ≥ 2.
+- **Converging phase:** from then on, if the top ending leads the next by a clear margin (builder tunes it; start at 0.15) and its score is > 0, that ending becomes the **destination**. Chaos additionally requires `chaos_marks` ≥ 2, and Ending 4 requires `withdraw_marks` ≥ 2.
 - If no ending leads clearly, another open dilemma follows. After 12 resolved dilemmas, the top score wins.
 - Once a destination is set, the next dilemma is the **climax**: an authored template for that ending, filled with the player's real villagers and history. The destination never changes after it is set.
 - **Tie-breaking:** if scores are exactly equal, use the order 1, 2, 3, 4, 5.
@@ -146,7 +146,7 @@ Each climax is a final, irreversible choice. The ending is committed only when t
 1. **The Names We Buried:** reveal the consequential truth the player knows (from the flags) to the village, at the cost of the villager they're closest to. Choosing to stay silent instead commits the same ending in its darker variant: the truth stays buried.
 2. **The Last Place at the Table:** the final shared meal. There are fewer portions than chairs. The player chooses who goes without, possibly themselves. There is no option that feeds everyone.
 3. **The Peace You Made:** the player proposes the rationing order that ends the feud. It works, but it requires suppressing a truth or granting power to one person. The player chooses which.
-4. **The Road That Goes On:** the village can now run itself without the player. The game sets this from flags: villagers the player taught, mediated for or handed authority to. The opposite of Chaos: hope in a future, just without you. A loved villager (highest trust) asks the player to stay, not because they need them but because they want them there. The player learns that being needed isn't the same as being loved. They choose to leave or to stay.
+4. **The Road That Goes On:** this shares Chaos's feeling, *this world and I are done*, but the player removes themselves instead of everything (player's decision). Whether the village can run without them changes the epilogue, not eligibility. If the player taught, mediated for or handed authority to villagers (flags), the village carries on. If not, it stagnates. A loved villager (highest trust) asks the player to stay, not because they need them but because they want them there. The player learns that being needed isn't the same as being loved. They choose to leave or to stay.
 5. **The End of All Things:** the old mechanism beneath the bell tower (builder names it; distinct from the Palimpsest). The villager with the oldest real promise to the player asks if nothing was worth saving. The player activates it, or doesn't. The player activates it, or doesn't.
 
 **Refusing a climax** *(player's decision: give them the choice, then trigger the ending)*: every climax offers the destination's act and the option to refuse it. That final choice is what the player thinks, and it is final. The game records it as evidence and commits the ending at once, with no second climax:
