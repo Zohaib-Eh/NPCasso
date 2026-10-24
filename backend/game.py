@@ -143,15 +143,23 @@ def react(conn, llm, world, player, event_id, npc_ids) -> dict:
 
 
 def _slay_progress(conn, player, ev, out):
-    """Filled in by the quest system (Task 4)."""
+    mob = ev.get("details", {}).get("mob") or ""
+    if ev["type"] != "slay" or not mob:
+        return
+    for p in db.open_promises(conn, player=player, kind="quest"):
+        if p["target"] and mob.startswith(p["target"]):
+            if p["count"] <= 1:
+                _complete_quest(conn, player, p, ev["game_time"], out)
+            else:
+                db.update_promise(conn, p["id"], count=p["count"] - 1)
 
 
-def _internal_event(conn, player, npc_id, type, game_time, text, details=None) -> int:
-    """A game-derived event (promise kept/broken, quest done/failed) the NPC always knows about."""
+def _internal_event(conn, player, npc_id, type, game_time, text, details=None, delta=None) -> int:
+    """A game-derived event (promise kept/broken, quest done) the NPC always knows about."""
     eid = db.add_event(conn, {"player": player, "actor": player, "target": npc_id, "type": type,
                               "details": details or {}, "witnesses": [npc_id], "game_time": game_time,
                               "source": "game", "verified": True, "confidence": None})
-    delta = rules.trust_delta(type)
+    delta = rules.trust_delta(type) if delta is None else delta
     db.add_trust(conn, npc_id, player, delta)
     db.add_memory(conn, npc_id, player, eid, type, text, "witnessed", 1.0, abs(delta))
     return eid
@@ -170,11 +178,92 @@ def _gift_progress(conn, player, npc_id, item, game_time, out):
             out["notices"].append(f"{name(npc_id)} noticed you kept your word.")
             progress.merge(out, progress.add_xp(conn, player, XP_FOR["promise_kept"], "promise_kept"))
         else:
-            db.update_promise(conn, p["id"], count=0, status="done")
-            _internal_event(conn, player, npc_id, "quest_done", game_time, f"the newcomer brought the {item} I asked for")
-            if p["reward"] in CONFIG["items"]:
-                out["give"].append({"item": CONFIG["items"][p["reward"]], "count": 1})
+            db.update_promise(conn, p["id"], count=0)
+            _complete_quest(conn, player, p, game_time, out)
         return  # one gift settles one promise
+
+
+# Quests -----------------------------------------------------------------------------------------
+
+def _rewards(p) -> list[dict]:
+    """Quest reward column: a JSON list of itemstrings (starter/LLM quests) or a legacy short item name."""
+    r = p["reward"]
+    if not r:
+        return []
+    names = json.loads(r) if r.startswith("[") else [CONFIG["items"].get(r)]
+    out = []
+    for n in names:
+        if n:
+            name_, _, count = n.partition(" ")
+            out.append({"item": name_, "count": int(count or 1)})
+    return out
+
+
+def _complete_quest(conn, player, p, game_time, out):
+    db.update_promise(conn, p["id"], status="done", count=0)
+    title = p["title"] or f"{p['item']} for {name(p['npc_id'])}"
+    _internal_event(conn, player, p["npc_id"], "quest_done", game_time, f"the newcomer finished my task: {title}",
+                    delta=p["trust"] if p["trust"] is not None else None)
+    out["give"] += _rewards(p)
+    out.setdefault("completed", []).append(title)
+    out["notices"].append(f"Quest complete: {title}")
+    progress.merge(out, progress.add_xp(conn, player, p["xp"] or 20, "quest"))
+
+
+def _starter(quest_id):
+    for npc_id, cfg in CONFIG["npcs"].items():
+        for q in cfg.get("quests", []):
+            if q["id"] == quest_id:
+                return npc_id, q
+    raise ValueError(f"unknown quest {quest_id!r}")
+
+
+def available_quests(conn, player) -> list[dict]:
+    taken = {r["quest_id"] for r in conn.execute("select quest_id from promises where player=? and quest_id is not null",
+                                                 (player,))}
+    return [{**q, "npc_id": n, "npc": c["name"]} for n, c in CONFIG["npcs"].items() for q in c.get("quests", [])
+            if q["id"] not in taken]
+
+
+def accept_quest(conn, player, quest_id) -> dict:
+    npc_id, q = _starter(quest_id)
+    if conn.execute("select 1 from promises where player=? and quest_id=?", (player, quest_id)).fetchone():
+        raise ValueError("quest already taken")
+    db.add_promise(conn, "quest", npc_id, player, q.get("item"), q["count"], None, json.dumps(q["reward"]),
+                   title=q["title"], xp=q["xp"], trust=q["trust"], quest_id=q["id"], target=q.get("mob"),
+                   total=q["count"])
+    return {"accepted": q["title"]}
+
+
+def journal(conn, player) -> dict:
+    rows = [dict(r) for r in conn.execute("select * from promises where player=? and kind='quest' order by id",
+                                          (player,))]
+    def view(r):
+        total = r["total"] or r["count"]
+        return {"id": r["quest_id"], "npc_id": r["npc_id"], "npc": name(r["npc_id"]), "title": r["title"],
+                "item": CONFIG["items"].get(r["item"]) if r["item"] else None, "mob": r["target"],
+                "progress": f"{total - r['count']}/{total}", "reward": _rewards(r)}
+    return {"active": [view(r) for r in rows if r["status"] == "open"],
+            "done": [view(r) for r in rows if r["status"] == "done"]}
+
+
+def handin(conn, world, player, npc_id, items: dict, game_time) -> dict:
+    """Hand quest items to a villager. Fills that villager's open bring-quests oldest first, taking only what's needed."""
+    player = f"{world}:{player}"
+    npc_cfg(npc_id)
+    out = {"consumed": {}, "completed": [], "give": [], "notices": [], "xp_gained": 0, "level_up": None}
+    for p in db.open_promises(conn, npc_id, player, kind="quest"):
+        itemstring = CONFIG["items"].get(p["item"] or "")
+        have = int(items.get(itemstring, 0)) - out["consumed"].get(itemstring, 0) if itemstring else 0
+        take = min(max(have, 0), p["count"])
+        if take == 0:
+            continue
+        out["consumed"][itemstring] = out["consumed"].get(itemstring, 0) + take
+        if take == p["count"]:
+            _complete_quest(conn, player, p, game_time, out)
+        else:
+            db.update_promise(conn, p["id"], count=p["count"] - take)
+    return out
 
 
 GREET_SITUATION = "the player walks up to you; speak first"
@@ -246,18 +335,13 @@ def tick(conn, llm, world, player, game_time) -> dict:
     """Periodic world update: promise deadlines. Gossip happens only when villagers meet (gossip())."""
     player = f"{world}:{player}"
     out = {"notices": [], "shouts": []}
-    for p in db.open_promises(conn, player=player):
-        if p["deadline"] >= game_time:
+    for p in db.open_promises(conn, player=player, kind="promise"):  # quests never expire
+        if p["deadline"] is None or p["deadline"] >= game_time:
             continue
-        if p["kind"] == "promise":
-            db.update_promise(conn, p["id"], status="broken")
-            _internal_event(conn, player, p["npc_id"], "promise_broken", game_time,
-                            f"the newcomer promised me {p['item']} and never brought it")
-            out["notices"].append(f"{name(p['npc_id'])} will remember that.")
-        else:
-            db.update_promise(conn, p["id"], status="failed")
-            _internal_event(conn, player, p["npc_id"], "quest_failed", game_time,
-                            f"the newcomer never brought the {p['item']}")
+        db.update_promise(conn, p["id"], status="broken")
+        _internal_event(conn, player, p["npc_id"], "promise_broken", game_time,
+                        f"the newcomer promised me {p['item']} and never brought it")
+        out["notices"].append(f"{name(p['npc_id'])} will remember that.")
 
     return out
 
@@ -332,6 +416,9 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
             break
         ctx = {**ctx, "validator_feedback": vres["errors"]}
     if offer:
-        db.add_promise(conn, "quest", npc_id, player, offer["item"], int(offer.get("count") or 1),
-                       game_time + 2, offer.get("reward"))
+        count = int(offer.get("count") or 1)
+        reward = CONFIG["items"].get(offer.get("reward") or "")
+        db.add_promise(conn, "quest", npc_id, player, offer["item"], count, None,
+                       json.dumps([reward] if reward else []), title=f"{count} {offer['item']} for {cfg['name']}",
+                       xp=20, trust=20, total=count)
     return {"reply": reply, "notices": notices, "quest_offer": offer}

@@ -73,3 +73,15 @@ def test_greet(db_path):
     c.post("/react", json={"world": "w", "player": "p", "event_id": e["event_id"], "npc_ids": e["react"]})
     r = c.post("/greet", json={"world": "w", "player": "p", "npc_id": "elise", "thread_id": "g", "game_time": 1.2})
     assert r.status_code == 200 and "the newcomer took apple from my stall without paying" in r.json()["reply"]
+
+
+def test_quest_routes(db_path):
+    c = client(db_path)
+    assert c.get("/quests", params={"world": "w", "player": "p"}).json()["available"]
+    assert c.post("/quest/accept", json={"world": "w", "player": "p", "quest_id": "find_apples"}).status_code == 200
+    assert c.post("/quest/accept", json={"world": "w", "player": "p", "quest_id": "find_apples"}).status_code == 422
+    r = c.post("/quest/handin", json={"world": "w", "player": "p", "npc_id": "elise", "items": {"default:apple": 5},
+                                      "game_time": 1.0}).json()
+    assert r["consumed"] == {"default:apple": 3}
+    p = c.get("/player", params={"world": "w", "player": "p"}).json()
+    assert p["xp"] == 30 and p["quests"]["done"][0]["id"] == "find_apples"

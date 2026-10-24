@@ -57,7 +57,7 @@ def connect(path: str) -> sqlite3.Connection:
 # Columns added after v1. "create table if not exists" won't add them to an existing save, so add them here.
 LATER_COLUMNS = {"memories": {"learned_at": "real"},
                  "promises": {"title": "text", "xp": "integer", "trust": "integer", "quest_id": "text",
-                              "target": "text"}}
+                              "target": "text", "total": "integer"}}
 
 
 def _add_missing_columns(conn):
@@ -144,9 +144,10 @@ def list_interactions(conn, npc_id=None, limit=50) -> list[dict]:
     return [_row(r) for r in conn.execute(q + " order by id desc limit ?", [*args, limit])]
 
 
-def add_promise(conn, kind, npc_id, player, item, count, deadline, reward=None) -> int:
+def add_promise(conn, kind, npc_id, player, item, count, deadline, reward=None, **extra) -> int:
+    """extra: title, xp, trust, quest_id, target, total (quest fields)."""
     return _insert(conn, "promises", {"kind": kind, "npc_id": npc_id, "player": player, "item": item,
-                                      "count": count, "deadline": deadline, "reward": reward})
+                                      "count": count, "deadline": deadline, "reward": reward, **extra})
 
 
 def open_promises(conn, npc_id=None, player=None, kind=None) -> list[dict]:

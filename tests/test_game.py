@@ -160,7 +160,8 @@ def test_quest_offer_recorded(conn):
     offer = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "bread"}}
     r = talk(conn, ScriptedLLM([Q, offer]), "w", "p", "elise", "any work?", "t", 1.0)
     q = db.open_promises(conn, "elise", "w:p", kind="quest")[0]
-    assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["reward"]) == (2, 3.0, "bread")
+    assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["xp"]) == (2, None, 20)
+    assert q["title"] == "2 coal for Elise" and q["reward"] == '["farming:bread"]'
 
 
 from backend.game import gossip, moods, tick, trade_quote
@@ -191,10 +192,10 @@ def test_quest_done_gives_reward(conn):
     assert conn.execute("select status from promises").fetchone()["status"] == "done"
 
 
-def test_quest_failed_after_deadline(conn):
+def test_quests_do_not_fail(conn):
     db.add_promise(conn, "quest", "rowan", "w:p", "coal", 1, 3.0, reward="pickaxe")
     tick(conn, MockLLM(), "w", "p", 3.5)
-    assert db.get_trust(conn, "rowan", "w:p") == 0
+    assert db.get_trust(conn, "rowan", "w:p") == 10
 
 
 def test_trade_quote_itemstrings(conn):

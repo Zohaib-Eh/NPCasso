@@ -46,6 +46,25 @@ class ReactIn(BaseModel):
         return v if isinstance(v, list) else []
 
 
+class AcceptIn(BaseModel):
+    world: str
+    player: str
+    quest_id: str
+
+
+class HandinIn(BaseModel):
+    world: str
+    player: str
+    npc_id: str
+    items: dict[str, int] = Field(default_factory=dict)
+    game_time: float
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def lua_empty_dict(cls, v):
+        return v if isinstance(v, dict) else {}
+
+
 class GossipIn(BaseModel):
     world: str
     player: str
@@ -166,7 +185,21 @@ def create_app(db_path: str, llm) -> FastAPI:
 
     @app.get("/player")
     def player(world: str, player: str):
-        return run(lambda c: progress.player_state(c, f"{world}:{player}"))
+        return run(lambda c: {**progress.player_state(c, f"{world}:{player}"),
+                              "quests": game.journal(c, f"{world}:{player}")})
+
+    @app.get("/quests")
+    def quests(world: str, player: str):
+        p = f"{world}:{player}"
+        return run(lambda c: {"available": game.available_quests(c, p), "journal": game.journal(c, p)})
+
+    @app.post("/quest/accept")
+    def quest_accept(a: AcceptIn):
+        return run(game.accept_quest, f"{a.world}:{a.player}", a.quest_id)
+
+    @app.post("/quest/handin")
+    def quest_handin(h: HandinIn):
+        return run(game.handin, h.world, h.player, h.npc_id, h.items, h.game_time)
 
     @app.get("/interactions")
     def interactions(npc_id: str | None = None, limit: int = 50):
