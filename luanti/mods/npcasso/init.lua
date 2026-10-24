@@ -16,9 +16,9 @@ local talk = {}                -- player name -> {npc, thread, history = {}, sen
 
 -- HTTP ---------------------------------------------------------------------------------------------
 
-local function fetch(method, path, body, cb)
+local function fetch(method, path, body, cb, timeout)
 	if not http then return cb(nil) end
-	http.fetch({url = BASE .. path, method = method, timeout = 30,
+	http.fetch({url = BASE .. path, method = method, timeout = timeout or 30,
 		data = body and core.write_json(body) or nil,
 		extra_headers = body and {"Content-Type: application/json"} or nil},
 		function(res)
@@ -31,7 +31,7 @@ local function fetch(method, path, body, cb)
 		end)
 end
 
-function npcasso.post(path, body, cb) fetch("POST", path, body, cb or function() end) end
+function npcasso.post(path, body, cb, timeout) fetch("POST", path, body, cb or function() end, timeout) end
 function npcasso.get(path, cb) fetch("GET", path, nil, cb) end
 
 local store = core.get_mod_storage()
@@ -62,7 +62,7 @@ local function next_notice(player)
 		return
 	end
 	q.showing = true
-	local id = player:hud_add({type = "text", position = {x = 0.5, y = 0.18}, alignment = {x = 0, y = 0},
+	local id = player:hud_add({type = "text", position = {x = 0.5, y = 0.22}, alignment = {x = 0, y = 0},
 		text = table.remove(q.list, 1), number = 0xFFE7A8, scale = {x = 100, y = 100}, size = {x = 2}})
 	core.after(2.5, function()
 		if not player:is_player() then return end
@@ -112,6 +112,15 @@ local function apply(name, out)
 		npcasso.refresh_player(name)
 	end
 	if out.level_up then npcasso.level_up(player, out.level_up) end
+	npcasso.story_clock = npcasso.story_clock or {}
+	if out.day then npcasso.story_clock[name] = {day = out.day, time = out.time} end
+	npcasso.cold = npcasso.cold or {}
+	npcasso.cold[name] = out.cold or 0
+	if out.sustain == false and player:get_hp() > 0 then
+		player:set_hp(0, {type = "set_hp", custom_type = "npcasso:cold"})
+	end
+	dress_winter(out.phase)
+	if out.offer and npcasso.offer_ending then npcasso.offer_ending(name, out.offer_text) end
 	if out.event_id then npcasso.refresh_moods() end
 	for _, g in ipairs(out.give or {}) do
 		local left = player:get_inventory():add_item("main", ItemStack(g.item .. " " .. g.count))
@@ -382,10 +391,10 @@ local function show_talk(name)
 		table.concat(log, "\n\n")) .. "]" ..
 		"field[4.9,8.25;7.5,0.9;msg;;]field_close_on_enter[msg;false]" ..
 		"button[12.6,8.25;2.1,0.9;send;Say]" ..
-		"button[4.9,9.4;2.3,0.9;trade;Trade]" ..
-		"button[7.4,9.4;2.3,0.9;quests;Quests]" ..
-		"button[9.9,9.4;2.5,0.9;give;Give held item]" ..
-		"button_exit[12.6,9.4;2.1,0.9;close;Leave]" ..
+		"button[4.9,9.4;2.0,0.9;trade;Trade]" ..
+		"button[7.1,9.4;2.0,0.9;quests;Quests]" ..
+		"button[9.3,9.4;3.2,0.9;give;Give held item]" ..
+		"button_exit[12.7,9.4;2.0,0.9;close;Leave]" ..
 		"set_focus[msg;true]"
 	core.show_formspec(name, "npcasso:talk", fs)
 end
@@ -521,7 +530,7 @@ local function show_trade(name)
 		fs = fs .. "label[0.8,2.2;" .. core.formspec_escape(q.reason == "no_work_block" and
 			"\"I can't work without my anvil.\"" or "\"Not today. Not for you.\"") .. "]"
 	end
-	fs = fs .. "label[0.4,3.75;" .. core.formspec_escape(t.trade_status or "") .. "]" ..
+	fs = fs .. "hypertext[0.4,3.45;9.7,0.7;status;" .. core.formspec_escape(t.trade_status or "") .. "]" ..
 		"list[current_player;main;0.4,4.3;8,1;]" ..
 		"list[current_player;main;0.4,5.65;8,3;8]" ..
 		"button[0.4,9.2;3,0.8;back;Back]" ..
@@ -699,6 +708,27 @@ core.register_globalstep(function(dtime)
 	end
 end)
 
+local cold_acc = {}
+core.register_globalstep(function(dtime)
+	if not npcasso.cold then return end
+	for _, p in ipairs(core.get_connected_players()) do
+		local name = p:get_player_name()
+		local rate = npcasso.cold[name]
+		if rate and rate > 0 and p:get_hp() > 0 then
+			cold_acc[name] = (cold_acc[name] or 0) + rate * dtime
+			if cold_acc[name] >= 1 then
+				local lost = math.floor(cold_acc[name])
+				cold_acc[name] = cold_acc[name] - lost
+				if p:get_hp() - lost <= 0 then
+					p:set_hp(0, {type = "set_hp", custom_type = "npcasso:cold"})
+				else
+					p:set_hp(p:get_hp() - lost)
+				end
+			end
+		end
+	end
+end)
+
 -- Spawn safety: never start stuck in terrain, water or trees -----------------------------------------
 
 local function open(pos)
@@ -790,8 +820,8 @@ function npcasso.show_guide(name, tab)
 	for _, g in ipairs(GUIDE) do table.insert(titles, g[1]) end
 	core.show_formspec(name, "npcasso:guide", "formspec_version[6]size[13,10]" ..
 		"tabheader[0,0;guide_tab;" .. table.concat(titles, ",") .. ";" .. tab .. ";false;true]" ..
-		"box[0.3,0.3;12.4,8.4;#00000055]" ..
-		"hypertext[0.6,0.5;11.8,8;text;" .. core.formspec_escape("<global color=#EEEEEE size=17>" .. GUIDE[tab][2]) .. "]" ..
+		"box[0.3,0.9;12.4,7.8;#00000055]" ..
+		"hypertext[0.6,1.05;11.8,7.4;text;" .. core.formspec_escape("<global color=#EEEEEE size=17>" .. GUIDE[tab][2]) .. "]" ..
 		"style_type[button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]button_exit[4.75,8.95;3.5,0.8;close;Got it]")
 end
 
@@ -826,6 +856,36 @@ end
 function npcasso.village()
 	local s = store:get_string("village")
 	return s ~= "" and core.deserialize(s) or nil
+end
+
+-- Thin snow on the grass, then the farm pool freezes. Paths stay clear. Once a stage is laid it stays.
+local WINTER_MARK = {{6, 6}, {-6, 6}, {6, -6}, {-6, -6}, {10, 4}, {-12, 5}, {8, -10}, {-9, -7}}
+
+local function winter_rank(phase)
+	if phase == "pressure" then return 1 end
+	if phase == "closing" or phase == "frozen" then return 2 end
+	return 0
+end
+
+function dress_winter(phase)
+	local want = winter_rank(phase)
+	if want == 0 then return end
+	local have = tonumber(store:get_string("winter_rank")) or 0
+	if have >= want then return end
+	local o = npcasso.village()
+	if not (o and core.registered_nodes["default:snow"]) then return end
+	for i = 1, (want == 1 and 4 or #WINTER_MARK) do
+		local spot = WINTER_MARK[i]
+		local pos = {x = o.x + spot[1], y = o.y, z = o.z + spot[2]}
+		if core.get_node(pos).name == "air" then core.set_node(pos, {name = "default:snow"}) end
+	end
+	if want >= 2 and core.registered_nodes["default:ice"] then
+		local water = {x = o.x - 11, y = o.y - 1, z = o.z - 11}
+		if core.get_node(water).name == "default:water_source" then
+			core.set_node(water, {name = "default:ice"})
+		end
+	end
+	store:set_string("winter_rank", tostring(want))
 end
 
 local function spawn_pos(o) return vector.offset(o, 0, 0.5, -6) end
@@ -919,10 +979,70 @@ function npcasso.build_village(player, origin)
 end
 
 core.register_on_respawnplayer(function(player)
+	local name = player:get_player_name()
+	if store:get_string("death:" .. name) ~= "" then
+		core.after(0, function()
+			if player:is_player() then
+				player:set_hp(0, {type = "set_hp", custom_type = "npcasso:dead"})
+			end
+		end)
+		return true
+	end
 	local o = npcasso.village()
 	if not o then return false end
 	player:set_pos(spawn_pos(o))
 	return true
+end)
+
+local function death_cause(reason)
+	if not reason or reason.custom_type == "npcasso:dead" then return nil end
+	if reason.custom_type == "npcasso:cold" then return "You died to the cold." end
+	if reason.type == "fall" then return "You died to the fall." end
+	if reason.type == "drown" then return "You died to the water." end
+	if reason.type == "node_damage" then
+		local n = reason.node or ""
+		if n:find("lava") or n:find("fire") then return "You died to the fire." end
+	end
+	if reason.type == "punch" then
+		local obj = reason.object
+		local ent = obj and obj.get_luaentity and obj:get_luaentity()
+		local id = ent and ent.name or ""
+		if id:find("mob") or id:find("animal") then return "You died to a beast." end
+		return "You died to a blow."
+	end
+	return nil
+end
+
+function core.show_death_screen(player, reason)
+	local name = player:get_player_name()
+	local line = death_cause(reason) or store:get_string("death:" .. name)
+	if line == "" then line = "You died." end
+	store:set_string("death:" .. name, line)
+	npcasso.post("/die", {world = npcasso.world(), player = name})
+	core.show_formspec(name, "npcasso:death",
+		"formspec_version[6]size[10,5]bgcolor[#320000b4;true]" ..
+		"hypertext[0.5,1.3;9,1.3;line;" .. core.formspec_escape(
+			"<global halign=center color=#FFFFFF><big><b>" .. plain(line) .. "</b></big>") .. "]" ..
+		"button[3.5,3.2;3,0.8;leave;Leave]")
+end
+
+core.register_on_player_receive_fields(function(player, formname, fields)
+	if formname == "npcasso:death" and fields.leave then
+		core.disconnect_player(player:get_player_name())
+	end
+end)
+
+core.register_on_joinplayer(function(player)
+	local name = player:get_player_name()
+	if store:get_string("death:" .. name) == "" then return end
+	core.after(0.2, function()
+		if not player:is_player() then return end
+		if player:get_hp() > 0 then
+			player:set_hp(0, {type = "set_hp", custom_type = "npcasso:dead"})
+		else
+			core.show_death_screen(player, {type = "set_hp", custom_type = "npcasso:dead"})
+		end
+	end)
 end)
 
 -- Commands -----------------------------------------------------------------------------------------
@@ -1026,3 +1146,4 @@ local MODPATH = core.get_modpath("npcasso")
 dofile(MODPATH .. "/hud.lua")
 dofile(MODPATH .. "/life.lua")
 dofile(MODPATH .. "/town.lua")
+dofile(MODPATH .. "/finale.lua")

@@ -9,7 +9,7 @@ Design: `docs/superpowers/specs/2026-10-23-npcasso-design.md` · Mubit notes: `d
 ## How it works
 
 ```
-Luanti mod (luanti/mods/npcasso)  --HTTP JSON-->  FastAPI backend (backend/)  --openai client-->  mock | Ollama | Mubit
+Luanti mod (luanti/mods/npcasso)  --HTTP JSON-->  FastAPI backend (backend/)  --openai client-->  mock | Ollama | Claude | Mubit
   witnesses, dialogue UI, notices                  SQLite state, rules, memory, validator
 ```
 
@@ -23,12 +23,13 @@ Luanti mod (luanti/mods/npcasso)  --HTTP JSON-->  FastAPI backend (backend/)  --
 ```powershell
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-Copy-Item .env.example .env      # then set LLM_PROVIDER: mock | local | mubit
+Copy-Item .env.example .env      # then set LLM_PROVIDER: mock | local | mubit | claude
 ```
 
 - `mock`: offline, deterministic. Used by the tests.
 - `local`: any OpenAI-compatible local server, e.g. Ollama with `LLM_MODEL=qwen2.5:7b`. For development only.
-- `mubit`: `MUBIT_API_KEY=mbt_...`. Choose `LLM_MODEL` once and never change it, because Mubit groups tasks by model. The hackathon requires demo traffic to go through Mubit.
+- `mubit`: `MUBIT_API_KEY=mbt_...`. `MUBIT_MODEL` defaults to `gpt-6-luna`, a model the starter credit serves. Keep that model fixed, because Mubit groups tasks by model. The hackathon requires demo traffic to go through Mubit.
+- `claude`: `ANTHROPIC_API_KEY=sk-ant-...` from https://console.anthropic.com/ (a Claude Code login is not this key). Default model is `claude-haiku-4-5`.
 
 ## Run
 

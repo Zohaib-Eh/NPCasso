@@ -1,6 +1,6 @@
 """Evaluation harness. Runs scenarios through the real game pipeline and scores replies against game state.
 
-    python -m eval.run --provider mock|local|mubit --split train|heldout|all --repeat N
+    python -m eval.run --provider mock|local|mubit|claude --split train|heldout|all --repeat N
 
 Train runs double as Mubit example feeding; held-out messages are never used for that.
 """
@@ -95,7 +95,7 @@ def run_all(provider: str, split: str = "all", repeat: int = 1, llm=None) -> dic
 def main():
     load_dotenv()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", default="mock", choices=["mock", "local", "mubit"])
+    ap.add_argument("--provider", default="mock", choices=["mock", "local", "mubit", "claude"])
     ap.add_argument("--split", default="all", choices=["train", "heldout", "all"])
     ap.add_argument("--repeat", type=int, default=1)
     a = ap.parse_args()

@@ -71,13 +71,43 @@ def test_openai_compat_local_omits_metadata():
     assert "metadata" not in seen["body"]
 
 
+def test_openai_compat_can_omit_json_object():
+    seen = {}
+    OpenAICompatLLM("http://x/v1", "k", "m", send_metadata=False, force_json=False,
+                    http_client=fake_client("{}", seen)).complete("npc_dialogue", {}, "t")
+    assert "response_format" not in seen["body"]
+
+
 def test_openai_compat_bad_json_is_error():
     r = OpenAICompatLLM("http://x/v1", "k", "m", send_metadata=False,
                         http_client=fake_client("not json", {})).complete("npc_dialogue", {}, "t")
     assert r.data is None and r.error
 
 
+def test_openai_compat_strips_markdown_fence():
+    r = OpenAICompatLLM("http://x/v1", "k", "m", send_metadata=False,
+                        http_client=fake_client('```json\n{"reply": "hi"}\n```', {})).complete("npc_dialogue", {}, "t")
+    assert r.data == {"reply": "hi"} and r.error is None
+
+
 def test_make_llm():
     assert isinstance(make_llm("mock"), MockLLM)
     with pytest.raises(ValueError):
         make_llm("nope")
+
+
+def test_make_llm_mubit(monkeypatch):
+    monkeypatch.setenv("MUBIT_API_KEY", "mbt_test")
+    monkeypatch.delenv("MUBIT_MODEL", raising=False)
+    llm = make_llm("mubit")
+    assert isinstance(llm, OpenAICompatLLM)
+    assert llm.model == "gpt-6-luna" and llm.send_metadata is False and llm.force_json is True
+    assert str(llm.client.base_url).rstrip("/").endswith("api.mubit.ai/openai/v1")
+
+
+def test_make_llm_claude(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    llm = make_llm("claude")
+    assert isinstance(llm, OpenAICompatLLM)
+    assert llm.model == "claude-haiku-4-5" and llm.send_metadata is False and llm.force_json is False

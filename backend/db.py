@@ -16,6 +16,9 @@ create table if not exists events (
 create table if not exists memories (
   id integer primary key, ts real, npc_id text, player text, event_id integer, type text, text text,
   how text, reliability real, severity integer, gossiped integer default 0, learned_at real);
+create table if not exists situations (
+  id integer primary key, player text, opener text, involves text, text text, opened_at real,
+  status text default 'open', event_id integer);
 create table if not exists promises (
   id integer primary key, kind text, npc_id text, player text, item text, count integer,
   deadline real, reward text, status text default 'open');
@@ -56,6 +59,7 @@ def connect(path: str) -> sqlite3.Connection:
 
 # Columns added after v1. "create table if not exists" won't add them to an existing save, so add them here.
 LATER_COLUMNS = {"memories": {"learned_at": "real"},
+                 "situations": {"told": "text"},
                  "promises": {"title": "text", "xp": "integer", "trust": "integer", "quest_id": "text",
                               "target": "text", "total": "integer"}}
 

@@ -1,4 +1,5 @@
-"""Deterministic game rules. The LLM never changes state; only these do."""
+"""Deterministic game rules: trust, prices, bands. The model does not change these. It proposes dimension scores,
+troubles between villagers and their consequences, and the game validates and stores them (story.py, situations.py)."""
 from .db import load_config
 
 CONFIG = load_config()

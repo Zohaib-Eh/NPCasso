@@ -55,7 +55,9 @@ def test_talk_rejects_bad_message(db_path):
 def test_trade_and_tick_routes(db_path):
     c = client(db_path)
     assert c.post("/trade", json={"world": "w", "player": "p", "npc_id": "elise", "work_block_present": True}).json()["ok"]
-    assert c.post("/tick", json={"world": "w", "player": "p", "game_time": 1.0}).json() == {"notices": [], "shouts": []}
+    tick = c.post("/tick", json={"world": "w", "player": "p", "game_time": 1.0}).json()
+    assert tick["notices"] == [] and tick["shouts"] == []
+    assert tick["phase"] == "open" and tick["day"] == 1 and tick["sustain"] is True
 
 
 def test_event_accepts_lua_empty_tables(db_path):

@@ -6,9 +6,8 @@ Source: docs.mubit.ai (including `llms-full.txt`), read 2026-10-23. Only documen
 
 - **Proxy only.** `backend/llm.py` `OpenAICompatLLM` uses the official `openai` client with `base_url=https://api.mubit.ai/openai/v1` and `Authorization: Bearer mbt_...`. There's no Mubit SDK. Model ids are unchanged.
 - **Three tasks** with fixed system prompts (`SYSTEM_PROMPTS`) and `response_format={"type": "json_object"}`. All per-call data (persona, memories, band, facts, player message) goes in the user message as sorted JSON, so new NPCs and new events land in the same task.
-- **Sessions:** every call sends `metadata.thread_id`.
-  - Dialogue and classify: one thread per conversation window.
-  - React: one thread per event per NPC.
+- **Model:** `MUBIT_MODEL`, default `gpt-6-luna`. The starter credit refuses other ids on this route (`400 starter_credit_model` lists the ones it serves).
+- **Sessions:** the starter credit refuses `store`, and OpenAI refuses `metadata` unless `store` is on. Calls therefore omit `metadata.thread_id`. Mubit still groups a task by the fixed prompt, the JSON format and the model, and gives a call with no thread id its own session from that prompt plus its user message.
 - **Request ids:** `x-middleware-request-id` (`mreq_...`) is stored in `interactions.mubit_request_id`, next to the validator result, retry flag and outcome (`corrected`).
 
 ## Verified facts (from docs)
@@ -39,6 +38,6 @@ Source: docs.mubit.ai (including `llms-full.txt`), read 2026-10-23. Only documen
 
 ## Observed
 
-*(Fill in once the key is live: task count in the console, first `mreq_` id, training status timestamps, adapter versions and results.)*
+- 2026-10-24: one `intent_classify`-shaped call to `gpt-6-luna` through `https://api.mubit.ai/openai/v1` returned JSON and an `mreq_` id. The same call with `metadata.thread_id` returned OpenAI's `metadata` / `store` 400. `store: true` returned Mubit's `starter_credit_option`. `qwen2.5:7b` and `claude-haiku-4-5` are not in the starter-credit list for this route.
 
 - Local dev baseline (qwen2.5:7b via Ollama, not Mubit), held-out 2026-10-23: 19/20 runs passed, first-try-valid 0.70, average 6.3 s per turn. The one failure was a harness counting bug, since fixed.

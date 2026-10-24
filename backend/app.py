@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import db, game, progress, rules
 from .llm import make_llm
+from .story import mark_died
 
 log = logging.getLogger("npcasso")
 
@@ -117,6 +118,17 @@ class TradeIn(BaseModel):
     work_block_present: bool = True
 
 
+class DieIn(BaseModel):
+    world: str
+    player: str
+
+
+class EndingIn(BaseModel):
+    world: str
+    player: str
+    game_time: float
+
+
 class TickIn(BaseModel):
     world: str
     player: str
@@ -196,6 +208,20 @@ def create_app(db_path: str, llm) -> FastAPI:
     @app.post("/trade")
     def trade(t: TradeIn):
         return run(game.trade_quote, t.world, t.player, t.npc_id, t.work_block_present)
+
+    @app.post("/die")
+    def die(d: DieIn):
+        return run(mark_died, f"{d.world}:{d.player}")
+
+    @app.post("/ending/accept")
+    def ending_accept(e: EndingIn):
+        out = run(game.accept_ending, llm, e.world, e.player, e.game_time)
+        log.info("ending accepted: %s", out["ending"])
+        return out
+
+    @app.post("/ending/refuse")
+    def ending_refuse(e: EndingIn):
+        return run(game.refuse_ending, e.world, e.player, e.game_time)
 
     @app.post("/tick")
     def tick(t: TickIn):

@@ -1,6 +1,9 @@
 """Deterministic check of an NPC output against what that NPC actually knows."""
 import re
 
+from . import situations
+from .db import load_config
+
 # Words that assert a past event: an error without a claim. Words common in advice ("a gift of flowers",
 # "hit the stone") only get flagged.
 EVENT_WORDS = ("stole", "stolen", "gave", "broke", "smashed", "promised")
@@ -43,5 +46,7 @@ def validate(task: str, output: dict | None, context: dict) -> dict:
     if quest and (not isinstance(quest, dict) or quest.get("item") not in context.get("items", [])
                   or not isinstance(quest.get("count", 1), int) or quest.get("count", 1) < 1):
         res["drop_quest"] = True
+    res["errors"] += situations.errors(output, context.get("facts") or {}, load_config()["npcs"]) \
+        if task == "npc_dialogue" else []
     res["ok"] = not res["errors"]
     return res

@@ -58,10 +58,10 @@ def test_react_invalid_output_uses_template(conn):
     assert r["shouts"] == [] and db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer took apple from my stall without paying"
 
 
-def test_walk_away_logged_only(conn):
+def test_walk_away_is_remembered(conn):
     r = record_event(conn, MockLLM(), ev("walk_away", witnesses=["elise"]))
-    assert r["notices"] == [] and db.top_memories(conn, "elise", "w:p") == []
-    assert db.get_trust(conn, "elise", "w:p") == 10
+    assert r["notices"] == [] and db.get_trust(conn, "elise", "w:p") == 10
+    assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer walked away while I was still speaking"
 
 
 def test_unknown_type_raises(conn):
@@ -76,10 +76,45 @@ import json
 from backend.game import NEUTRAL_LINE, talk
 
 Q = {"intent": "question", "confidence": 0.5, "promise": None, "claim": None}
+HARD = {"choice": {"options": ["help them", "refuse them"]}, "evidence": [{"dimension": "loyalty", "weight": 0.5}]}
 
 
 def dialogue_rows(conn):
     return [i for i in db.list_interactions(conn, "elise") if i["task"] == "npc_dialogue"]
+
+
+def test_talk_stores_the_score_and_drops_a_bad_dimension(conn):
+    from backend.story import _ensure
+    line = {"reply": "The woodpile will not last the two of them.", "claims": [], **HARD,
+            "evidence": [{"dimension": "compassion", "weight": 1}, {"dimension": "evil", "weight": 1},
+                         {"dimension": "loyalty", "weight": 3}]}
+    r = talk(conn, ScriptedLLM([Q, line]), "w", "p", "elise", "hello", "th", 0.4)
+    assert r["reply"].startswith("The woodpile")
+    _ensure(conn)
+    rows = conn.execute("select dimension, weight from evidence where player='w:p'").fetchall()
+    assert [(row["dimension"], row["weight"]) for row in rows] == [("compassion", 1.0)]
+    assert "season" in dialogue_rows(conn)[-1]["request"]["facts"]
+
+
+def test_a_rejected_line_does_not_score(conn):
+    from backend.story import _ensure
+    bad = {"reply": "Thanks for the bread!", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}],
+           "evidence": [{"dimension": "compassion", "weight": 1}]}
+    talk(conn, ScriptedLLM([Q, bad, {"reply": "Hello.", "claims": []}]), "w", "p", "elise", "hi", "th", 1.0)
+    _ensure(conn)
+    assert conn.execute("select count(*) c from evidence").fetchone()["c"] == 0
+
+
+def test_react_stores_the_score(conn):
+    recorded = record_event(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    eid = recorded["event_id"]
+    shout = {"shout": "Hey! I saw that!", "memory": "m",
+             "claims": [{"event_id": eid, "type": "theft", "how": "witnessed"}],
+             "evidence": [{"dimension": "justice", "weight": -1}]}
+    out = react(conn, ScriptedLLM([shout]), "w", "p", eid, ["elise"])
+    assert out["shouts"][0]["text"] == "Hey! I saw that!"
+    row = conn.execute("select dimension, weight from evidence where player='w:p'").fetchone()
+    assert (row["dimension"], row["weight"]) == ("justice", -1.0)
 
 
 def test_talk_recalls_theft(conn):
@@ -91,13 +126,13 @@ def test_talk_recalls_theft(conn):
 
 def test_talk_retries_then_passes(conn):
     bad = {"reply": "Thanks for the bread!", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
-    good = {"reply": "Hello.", "claims": []}
+    good = {"reply": "Hello.", "claims": [], **HARD}
     llm = ScriptedLLM([Q, bad, good])
     r = talk(conn, llm, "w", "p", "elise", "hi", "th1", 1.0)
     assert r["reply"] == "Hello."
     rows = dialogue_rows(conn)
     assert len(rows) == 2 and rows[0]["retried"] and rows[0]["prev_id"] == rows[1]["id"]
-    assert llm.calls[2][1]["validator_feedback"] == ["invented_event:99"]
+    assert "invented_event:99" in llm.calls[2][1]["validator_feedback"]
 
 
 def test_talk_two_failures_neutral(conn):
@@ -147,7 +182,7 @@ def test_correction_rejected_when_event_true(conn):
 
 def test_low_confidence_ignored(conn):
     t = {"intent": "threat", "confidence": 0.4, "promise": None, "claim": None}
-    talk(conn, ScriptedLLM([t, {"reply": "Hm.", "claims": []}]), "w", "p", "elise", "grr", "t", 1.0)
+    talk(conn, ScriptedLLM([t, {"reply": "Hm.", "claims": [], **HARD}]), "w", "p", "elise", "grr", "t", 1.0)
     assert db.get_trust(conn, "elise", "w:p") == 10
 
 
@@ -157,7 +192,7 @@ def test_threat_lowers_trust(conn):
 
 
 def test_quest_offer_recorded(conn):
-    offer = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "bread"}}
+    offer = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "bread"}, **HARD}
     r = talk(conn, ScriptedLLM([Q, offer]), "w", "p", "elise", "any work?", "t", 1.0)
     q = db.open_promises(conn, "elise", "w:p", kind="quest")[0]
     assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["xp"]) == (2, None, 20)
@@ -215,13 +250,14 @@ def test_trade_quote_itemstrings(conn):
     {"intent": "promise", "confidence": 0.9, "promise": {"item": "iron", "count": 2, "deadline_days": "tomorrow"}},
 ])
 def test_talk_survives_wrong_types_in_intent(conn, intent):
-    r = talk(conn, ScriptedLLM([intent, {"reply": "Hm.", "claims": []}]), "w", "p", "elise", "hi", "t", 1.0)
+    r = talk(conn, ScriptedLLM([intent, {"reply": "Hm.", "claims": [], **HARD}]), "w", "p", "elise", "hi", "t", 1.0)
     assert r["reply"] == "Hm."
 
 
 def test_talk_survives_wrong_types_in_dialogue(conn):
     bad_claim = {"reply": "x", "claims": [{"event_id": [1], "type": "gift", "how": "witnessed"}]}
-    bad_quest = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": "two", "reward": "bread"}}
+    bad_quest = {"reply": "Bring coal.", "claims": [], **HARD,
+                 "quest_offer": {"item": "coal", "count": "two", "reward": "bread"}}
     assert talk(conn, ScriptedLLM([Q, bad_claim, bad_claim]), "w", "p", "elise", "hi", "t", 1.0)["reply"].startswith("I could use your help")
     r = talk(conn, ScriptedLLM([Q, bad_quest]), "w", "p", "elise", "hi", "t", 1.0)
     assert r["reply"] == "Bring coal." and r["quest_offer"] is None
@@ -249,9 +285,10 @@ from backend.game import greet
 
 
 def test_greet_uses_dialogue_task_without_player_message(conn):
-    llm = ScriptedLLM([{"reply": "Oh. It's you.", "claims": []}])
+    llm = ScriptedLLM([{"reply": "Oh. It's you. Give Mira the wood, or keep it.", "claims": [],
+                        "choice": {"options": ["give Mira the wood", "keep the wood"]}}])
     r = greet(conn, llm, "w", "p", "elise", "g", 1.0)
-    assert r["reply"] == "Oh. It's you."
+    assert r["reply"] == "Oh. It's you. Give Mira the wood, or keep it."
     task, user = llm.calls[0]
     assert task == "npc_dialogue" and user["player_message"] is None
     assert user["facts"]["situation"] == "the player walks up to you; speak first"
@@ -373,10 +410,11 @@ def test_moods(conn):
 
 def test_greet_retries_once_on_invalid(conn):
     bad = {"reply": "You promised me iron!", "claims": []}
-    good = {"reply": "Morning, newcomer.", "claims": []}
+    good = {"reply": "Morning, newcomer. Give Mira the wood, or keep it.", "claims": [],
+            "choice": {"options": ["give Mira the wood", "keep the wood"]}}
     llm = ScriptedLLM([bad, good])
-    assert greet(conn, llm, "w", "p", "elise", "g", 1.0)["reply"] == "Morning, newcomer."
-    assert llm.calls[1][1]["validator_feedback"] == ["unclaimed_mention:promised"]
+    assert greet(conn, llm, "w", "p", "elise", "g", 1.0)["reply"] == "Morning, newcomer. Give Mira the wood, or keep it."
+    assert "unclaimed_mention:promised" in llm.calls[1][1]["validator_feedback"]
 
 
 # --- guidance and pointing ---

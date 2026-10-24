@@ -1,9 +1,10 @@
-"""Game orchestration: events, talk, trade, tick. Owns every state change; the LLM only proposes text."""
+"""Game orchestration: events, talk, trade, tick. Owns every state change; the model proposes words and a score."""
 import json
 import random
 import time
 
-from . import db, progress, rules
+from . import db, finale, progress, rules, situations
+from .story import add_evidence, end_run, report as story_report, story_facts
 from .validator import validate
 
 CONFIG = db.load_config()
@@ -78,6 +79,17 @@ def guidance_line(ctx, speaker) -> tuple[str, str]:
     return "Have a look at the quest board in the town hall, south of the square.", "town_hall"
 
 
+def take_evidence(conn, player: str, data: dict | None, event_id: int | None = None) -> None:
+    """Keep the dimensions a reply scored. A bad entry is dropped; the line still stands."""
+    for item in (data or {}).get("evidence") or []:
+        if not isinstance(item, dict) or "weight" not in item:
+            continue
+        try:
+            add_evidence(conn, player, item.get("dimension"), float(item["weight"]), event_id, "spoken")
+        except (TypeError, ValueError):
+            continue
+
+
 def log_call(conn, task, npc_id, player, thread_id, user, res, vres=None, retried=False, prev_id=None) -> int:
     return db.add_interaction(conn, {
         "task": task, "npc_id": npc_id, "player": player, "thread_id": thread_id, "request": user,
@@ -127,7 +139,11 @@ def record_event(conn, llm, ev: dict) -> dict:
     # (Lua sends witnesses nearest first). Everyone who knows still gets the memory and the trust change.
     ordered = ([target] if target in witnesses else []) + [w for w in witnesses if w != target]
     speakers = set(ordered[:MAX_SPEAKERS])
-    if ev["type"] == "walk_away":  # weak signal: logged, never a label or a state change
+    if ev["type"] == "walk_away" and target:  # leaving a conversation is a choice; the next talk can score it
+        db.add_memory(conn, target, player, eid, "walk_away",
+                      "the newcomer walked away while I was still speaking", "witnessed", 1.0, 15, ev["game_time"])
+        return out
+    if ev["type"] == "walk_away":
         return out
 
     knowers = list(dict.fromkeys(witnesses + ([target] if target and ev["type"] in TARGET_KNOWS else [])))
@@ -164,12 +180,14 @@ def react(conn, llm, world, player, event_id, npc_ids) -> dict:
             continue
         what, _ = describe(row["type"], npc, row["target"], rules.short_item(details.get("item", "")))
         ctx = build_context(conn, npc, player)
+        ctx["facts"].update(story_facts(conn, player, row["game_time"]))
         ctx["event"] = {"id": event_id, "type": row["type"], "what": what}
         thread = f"{player}:{npc}:event:{event_id}"
         res = llm.complete("npc_react", ctx, thread)
         vres = validate("npc_react", res.data, ctx)
         log_call(conn, "npc_react", npc, player, thread, ctx, res, vres)
         if vres["ok"]:
+            take_evidence(conn, player, res.data, event_id)
             out["shouts"].append({"npc_id": npc, "text": res.data["shout"]})
     return out
 
@@ -311,13 +329,16 @@ def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
         title = json.loads(done["details"]).get("title", "your task")
         situation = (f"the player has just finished the task you gave them (\"{title}\") and handed it over; "
                      "thank them warmly, in character, and say what it means to you; speak first")
-    ctx = build_context(conn, npc_id, player, None, {"situation": situation})
+    ctx = build_context(conn, npc_id, player, None, {"situation": situation, **story_facts(conn, player, game_time),
+                                                     **situations.facts(conn, player, npc_id, game_time)})
     prev = None
     for attempt in range(2):  # one retry with the validator's feedback, like talk()
         res = llm.complete("npc_dialogue", ctx, thread_id)
         vres = validate("npc_dialogue", res.data, ctx)
         prev = log_call(conn, "npc_dialogue", npc_id, player, thread_id, ctx, res, vres, attempt > 0, prev)
         if vres["ok"]:
+            take_evidence(conn, player, res.data)
+            situations.take(conn, player, npc_id, res.data, game_time, ctx["facts"], greeting=True)
             return {"reply": res.data["reply"]}
         if res.data is None and res.error:
             break
@@ -325,13 +346,18 @@ def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
     return {"reply": ""}
 
 
-def _voice(conn, llm, npc, player, situation, fallback) -> str:
+def _voice(conn, llm, npc, player, situation, fallback, game_time=None) -> str:
     """One LLM line from `npc` in the given situation (npc_dialogue task), or the fallback if it fails."""
-    ctx = build_context(conn, npc, player, None, {"situation": situation})
+    extra = {"situation": situation}
+    if game_time is not None:
+        extra.update(story_facts(conn, player, game_time))
+    ctx = build_context(conn, npc, player, None, extra)
     thread = f"{player}:{npc}:scene:{time.time():.0f}"
     res = llm.complete("npc_dialogue", ctx, thread)
     vres = validate("npc_dialogue", res.data, ctx)
     log_call(conn, "npc_dialogue", npc, player, thread, ctx, res, vres)
+    if vres["ok"]:
+        take_evidence(conn, player, res.data)
     return res.data["reply"] if vres["ok"] else fallback
 
 
@@ -345,6 +371,7 @@ def gossip(conn, world, player, teller, listener, game_time, roll: float | None 
     m = conn.execute(
         "select m.*, e.target, e.details from memories m join events e on e.id = m.event_id "
         "where m.npc_id=? and m.player=? and m.severity>=10 and m.reliability>=0.25 "
+        "and m.type not in ('situation', 'consequence') "
         "and (m.learned_at is null or ? - m.learned_at >= ?) "
         "and m.event_id not in (select event_id from memories where npc_id=? and player=?) "
         "order by m.severity desc, m.id limit 1",
@@ -367,10 +394,10 @@ def gossip(conn, world, player, teller, listener, game_time, roll: float | None 
         return {"shared": True, "line": None, "reply": None}
     line = _voice(conn, llm, teller, player,
                   f"you meet {name(listener)} in the village and pass on a rumour about the newcomer: {what}. "
-                  "Say it to them in one sentence, as gossip, in your own voice", f"Psst... {what}.")
+                  "Say it to them in one sentence, as gossip, in your own voice", f"Psst... {what}.", game_time)
     reply = _voice(conn, llm, listener, player,
                    f'{name(teller)} just told you: "{line}". React to {name(teller)} in one short sentence',
-                   "Really?!")
+                   "Really?!", game_time)
     return {"shared": True, "line": line, "reply": reply}
 
 
@@ -409,7 +436,37 @@ def tick(conn, llm, world, player, game_time) -> dict:
                         f"the newcomer promised me {p['item']} and never brought it")
         out["notices"].append(f"{name(p['npc_id'])} will remember that.")
 
+    out.update(story_report(conn, player, game_time))
+    if out.get("offer"):
+        out["offer_text"] = finale.ENDINGS[out["ending"]]["offer"]
     return out
+
+
+def accept_ending(conn, llm, world, player, game_time) -> dict:
+    """The player stands with the village. The run ends, and the ending plays as a short scene."""
+    player = f"{world}:{player}"
+    rep = story_report(conn, player, game_time)
+    ending = rep.get("ending")
+    if rep["phase"] != "closing" or not ending:
+        raise ValueError("no ending is being offered")
+    end_run(conn, player, ending)
+    e = finale.ENDINGS[ending]
+    lines = []
+    for npc in finale.speakers(conn, player, list(CONFIG["npcs"])):
+        situation = (f"the last gathering of the story: {e['gather']}. Do not greet or welcome the newcomer; "
+                     "you are already together. Say one or two sentences to them about what you carry of them, "
+                     "using only what you remember, and nothing about what comes next")
+        lines.append((name(npc), _voice(conn, llm, npc, player, situation, e["fallback"], game_time)))
+    return {"ending": ending, "title": e["title"], "tint": e["tint"], "slides": finale.slides(ending, lines)}
+
+
+def refuse_ending(conn, world, player, game_time) -> dict:
+    """The player walks away from the gathering. They are not offered it again for a while."""
+    player = f"{world}:{player}"
+    db.add_event(conn, {"player": player, "actor": player, "target": None, "type": "ending_refused",
+                        "details": {}, "witnesses": [], "game_time": game_time, "source": "game",
+                        "verified": True, "confidence": None})
+    return {"ok": True}
 
 
 # Harvest Festival ---------------------------------------------------------------------------------
@@ -528,7 +585,8 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
     except (TypeError, ValueError, AttributeError):  # well-formed JSON with wrong value types from the LLM
         extra = {}
 
-    ctx = build_context(conn, npc_id, player, message, extra)
+    ctx = build_context(conn, npc_id, player, message, {**extra, **story_facts(conn, player, game_time),
+                                                        **situations.facts(conn, player, npc_id, game_time)})
     reply, point_to = guidance_line(ctx, npc_id)
     offer, prev = None, None
     for attempt in range(2):
@@ -538,6 +596,8 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
         if res.data is None and res.error:
             break  # timeout or network error: retrying would blow the game's HTTP budget
         if vres["ok"]:
+            take_evidence(conn, player, res.data)
+            situations.take(conn, player, npc_id, res.data, game_time, ctx["facts"])
             reply = res.data["reply"]
             p = res.data.get("point_to")
             point_to = p if isinstance(p, str) and p in ctx["facts"]["guide"]["places"] else None

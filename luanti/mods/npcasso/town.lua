@@ -333,9 +333,11 @@ local function quest_row(y, q, button)
 	end
 	local line = (q.npc or "") .. (q.progress and ("  ·  " .. q.progress) or "") ..
 		(#reward > 0 and ("  ·  reward: " .. table.concat(reward, ", ")) or "") .. (q.xp and ("  ·  " .. q.xp .. " XP") or "")
+	local id = ("q" .. tostring(y)):gsub("[^%w]", "")
 	return icon ..
-		"label[1.4," .. (y + 0.25) .. ";" .. esc((q.main and "* " or "") .. q.title) .. "]" ..
-		"label[1.4," .. (y + 0.7) .. ";" .. esc(line) .. "]" .. (button or "")
+		"hypertext[1.4," .. (y + 0.05) .. ";9.2,0.5;" .. id .. "a;" .. esc("<b>" .. plain((q.main and "* " or "") .. (q.title or "")) .. "</b>") .. "]" ..
+		"hypertext[1.4," .. (y + 0.5) .. ";9.2,0.45;" .. id .. "b;" .. esc("<style color=#BBBBBB size=14>" .. plain(line) .. "</style>") .. "]" ..
+		(button or "")
 end
 
 local function quests_fs(title, rows, footer)
@@ -368,11 +370,11 @@ function npcasso.show_board(name)
 			end
 			local footer
 			if f and f.held then
-				footer = "label[0.4,9.6;The Harvest Festival has been held.]"
+				footer = "hypertext[0.4,9.25;10.2,0.8;held;" .. esc("The Harvest Festival has been held.") .. "]"
 			elseif f and f.eligible then
 				footer = "button[0.4,9.3;5,1;festival;Begin the Harvest Festival]"
 			elseif f then
-				footer = "label[0.4,9.4;" .. esc(("Harvest Festival: reach Lv %d (you are Lv %d) and finish %d main quest(s) (*)."):format(
+				footer = "hypertext[0.4,9.2;10.2,1.1;need;" .. esc(("Harvest Festival: reach Lv %d (you are Lv %d) and finish %d main quest(s) (*)."):format(
 					f.level_needed, f.level, #f.missing_main)) .. "]"
 			end
 			core.show_formspec(name, "npcasso:board", quests_fs("Village Quest Board", rows,

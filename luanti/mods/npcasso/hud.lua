@@ -6,21 +6,38 @@ local xp_hud = {}  -- player name -> hud id
 
 local function restack(player, list)
 	for i, line in ipairs(list) do
-		player:hud_change(line.id, "offset", {x = 12, y = -(i - 1) * LINE_HEIGHT})
+		player:hud_change(line.id, "offset", {x = 16, y = -(i - 1) * LINE_HEIGHT})
 	end
 end
 
 -- Adds a line to the player's bottom-left feed. Lines fade out after FEED_SECONDS.
+local function wrap_feed(text)
+	local out, line = {}, ""
+	for word in tostring(text):gmatch("%S+") do
+		local next_line = line == "" and word or (line .. " " .. word)
+		if #next_line > 42 and line ~= "" then
+			table.insert(out, line)
+			line = word
+		else
+			line = next_line
+		end
+	end
+	if line ~= "" then table.insert(out, line) end
+	return out
+end
+
 function npcasso.feed(player, text, color)
 	if type(player) == "string" then player = core.get_player_by_name(player) end
 	if not player or not player:is_player() then return end
 	local name = player:get_player_name()
 	local list = feeds[name] or {}
 	feeds[name] = list
-	local id = player:hud_add({type = "text", position = {x = 0, y = 0.82}, alignment = {x = 1, y = -1},
-		offset = {x = 12, y = 0}, text = text, number = color or 0xFFFFFF, scale = {x = 600, y = 40},
-		style = 0})
-	table.insert(list, 1, {id = id, t = os.time()})
+	for _, line in ipairs(wrap_feed(text)) do
+		local id = player:hud_add({type = "text", position = {x = 0, y = 0.68}, alignment = {x = 1, y = -1},
+			offset = {x = 16, y = 0}, text = line, number = color or 0xFFFFFF, scale = {x = 100, y = 40},
+			style = 0})
+		table.insert(list, 1, {id = id, t = os.time()})
+	end
 	while #list > FEED_LINES do player:hud_remove(table.remove(list).id) end
 	restack(player, list)
 end
@@ -68,7 +85,7 @@ function npcasso.refresh_player(name)
 			player:hud_change(xp_hud[name], "text", xp_text(s))
 		else
 			xp_hud[name] = player:hud_add({type = "text", position = {x = 0, y = 0}, alignment = {x = 1, y = 1},
-				offset = {x = 12, y = 12}, text = xp_text(s), number = 0x9AE07A, style = 1})
+				offset = {x = 16, y = 16}, text = xp_text(s), number = 0x9AE07A, style = 1})
 		end
 	end)
 end
@@ -76,7 +93,7 @@ end
 function npcasso.level_up(player, level)
 	if type(player) == "string" then player = core.get_player_by_name(player) end
 	if not player then return end
-	local id = player:hud_add({type = "text", position = {x = 0.5, y = 0.35}, alignment = {x = 0, y = 0},
+	local id = player:hud_add({type = "text", position = {x = 0.5, y = 0.42}, alignment = {x = 0, y = 0},
 		text = "Level up!  Lv " .. level, number = 0xFFE066, size = {x = 3}, style = 1})
 	core.sound_play("default_place_node_metal", {to_player = player:get_player_name(), gain = 1.0}, true)
 	npcasso.feed(player, "Level up! You are now level " .. level .. ".", 0xFFE066)
@@ -90,24 +107,26 @@ end)
 
 -- Clock (top-right): "Day 3  ·  14:20  (day)"
 local clock_hud, clock_t = {}, 0
-local function clock_text()
+local function clock_text(name)
 	local t = core.get_timeofday() * 24
 	local h, m = math.floor(t), math.floor((t % 1) * 60)
 	local part = (h >= 6 and h < 18) and "day" or "night"
-	return ("Day %d  ·  %02d:%02d  (%s)"):format(core.get_day_count() + 1, h, m, part)
+	local saved = npcasso.story_clock and npcasso.story_clock[name]
+	local day = (saved and saved.day) or (core.get_day_count() + 1)
+	return ("Day %d  ·  %02d:%02d  (%s)"):format(day, h, m, part)
 end
 core.register_globalstep(function(dtime)
 	clock_t = clock_t + dtime
 	if clock_t < 2 then return end
 	clock_t = 0
-	local text = clock_text()
 	for _, p in ipairs(core.get_connected_players()) do
 		local name = p:get_player_name()
+		local text = clock_text(name)
 		if clock_hud[name] then
 			p:hud_change(clock_hud[name], "text", text)
 		else
 			clock_hud[name] = p:hud_add({type = "text", position = {x = 1, y = 0}, alignment = {x = -1, y = 1},
-				offset = {x = -12, y = 12}, text = text, number = 0xFFF3DC, style = 1})
+				offset = {x = -16, y = 16}, text = text, number = 0xFFF3DC, style = 1})
 		end
 	end
 end)
