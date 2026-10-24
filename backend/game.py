@@ -235,7 +235,7 @@ def _complete_quest(conn, player, p, game_time, out):
     db.update_promise(conn, p["id"], status="done", count=0)
     title = p["title"] or f"{p['item']} for {name(p['npc_id'])}"
     _internal_event(conn, player, p["npc_id"], "quest_done", game_time, f"the newcomer finished my task: {title}",
-                    delta=p["trust"] if p["trust"] is not None else None)
+                    details={"title": title}, delta=p["trust"] if p["trust"] is not None else None)
     out["give"] += _rewards(p)
     out.setdefault("completed", []).append(title)
     out["notices"].append(f"Quest complete: {title}")
@@ -304,7 +304,14 @@ GREET_SITUATION = "the player walks up to you; speak first"
 def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
     """NPC speaks first when the player approaches. Same npc_dialogue task, no player message."""
     player = f"{world}:{player}"
-    ctx = build_context(conn, npc_id, player, None, {"situation": GREET_SITUATION})
+    situation = GREET_SITUATION
+    done = conn.execute("select e.details from events e where e.player=? and e.target=? and e.type='quest_done' "
+                        "and ? - e.game_time <= 0.05 order by e.id desc limit 1", (player, npc_id, game_time)).fetchone()
+    if done:  # the player just handed over what this villager asked for
+        title = json.loads(done["details"]).get("title", "your task")
+        situation = (f"the player has just finished the task you gave them (\"{title}\") and handed it over; "
+                     "thank them warmly, in character, and say what it means to you; speak first")
+    ctx = build_context(conn, npc_id, player, None, {"situation": situation})
     prev = None
     for attempt in range(2):  # one retry with the validator's feedback, like talk()
         res = llm.complete("npc_dialogue", ctx, thread_id)

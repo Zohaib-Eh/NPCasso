@@ -419,9 +419,37 @@ function npcasso.open_talk(player, npc_id)
 	end
 	local t = talk[name]
 	show_talk(name)
-	if os.time() - (t.last or 0) > REGREET_AFTER and not t.busy then
+	if t.busy then return end
+	t.busy = true
+	-- First hand over anything this villager asked for (they notice what you're carrying), then they speak,
+	-- so their greeting already knows the quest is done.
+	local counts = {}
+	for _, stack in ipairs(player:get_inventory():get_list("main")) do
+		if not stack:is_empty() then counts[stack:get_name()] = (counts[stack:get_name()] or 0) + stack:get_count() end
+	end
+	npcasso.post("/quest/handin", {world = npcasso.world(), player = name, npc_id = npc_id, items = counts,
+		game_time = npcasso.game_time()}, function(out)
+		if talk[name] ~= t then return end
+		local finished = out and #(out.completed or {}) > 0
+		if out then
+			local inv = player:get_inventory()
+			for item, n in pairs(out.consumed or {}) do inv:remove_item("main", ItemStack(item .. " " .. n)) end
+			for _, title in ipairs(out.completed or {}) do say(name, "*", "You hand over what was asked: " .. title) end
+			apply(name, out)
+		end
+		t.busy = false
+		if finished or os.time() - (t.last or 0) > REGREET_AFTER then npcasso.greet_in_window(player, npc_id) end
+	end)
+end
+
+function npcasso.greet_in_window(player, npc_id)
+	local name = player:get_player_name()
+	local t = talk[name]
+	if not t or t.busy then return end
+	do
 		-- The villager speaks first, in the window, shaped by what they remember.
 		t.busy, t.last = true, os.time()
+		show_talk(name)
 		npcasso.post("/greet", {world = npcasso.world(), player = name, npc_id = npc_id, thread_id = t.thread,
 			game_time = npcasso.game_time()}, function(out)
 			if talk[name] ~= t then return end

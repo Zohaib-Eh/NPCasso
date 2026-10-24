@@ -66,3 +66,12 @@ def test_quests_never_expire(conn):
     game.accept_quest(conn, "w:p", "find_apples")
     game.tick(conn, MockLLM(), "w", "p", 99.0)
     assert game.journal(conn, "w:p")["active"] and db.get_trust(conn, "elise", "w:p") == 10
+
+
+def test_greet_after_handin_thanks_for_quest(conn):
+    from tests.conftest import ScriptedLLM
+    game.accept_quest(conn, "w:p", "find_apples")
+    game.handin(conn, "w", "p", "elise", {"default:apple": 3}, 1.0)
+    llm = ScriptedLLM([{"reply": "Thank you for the apples!", "claims": []}])
+    game.greet(conn, llm, "w", "p", "elise", "g", 1.01)
+    assert "Find 3 apples for Elise" in llm.calls[0][1]["facts"]["situation"]
