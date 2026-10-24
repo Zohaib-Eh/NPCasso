@@ -20,9 +20,9 @@ The frontend moves to **Godot 4** (player's decision: Minecraft-style visuals do
 ## 2. Goals
 
 1. **Fixed start (≈2 min).** A short opening cutscene. The player arrives in Bellwether at dusk on Tobin's grain cart. They helped Tobin on the road, so he already trusts them (start trust: friendly). The village is in a grain shortage from the first frame: half-empty market, a notice at the town hall about rationing. The first dilemma (Tobin's hidden grain) is authored and starts in the first conversation with Tobin.
-2. **Generated middle (≈10 min, 3–4 dilemmas).** After the first, each dilemma is proposed by the LLM from the current world state and validated by the game (section 4).
+2. **Generated middle (long: about 8–12 dilemmas, 45–90 min).** *(Player's decision: keep it long. The video is a trailer cut from footage, and the debug panel can trigger anything.)* Dilemmas overlap: the next can start before the last one's consequences settle. After the first, each dilemma is proposed by the LLM from the current world state and validated by the game (section 4).
 3. **Twelve dimensions as evidence** (section 5). Never shown as a stat screen.
-4. **Natural convergence** (section 6). After at least 3 resolved dilemmas, if one ending's signature clearly leads, the director starts building that ending's climax.
+4. **Natural convergence** (section 6). After at least 6 resolved dilemmas, if one ending's signature clearly leads, the director starts building that ending's climax.
 5. **Fixed endings with cutscenes** (section 7). Five authored endings. Each ends in a cutscene and an epilogue built from verified events.
 6. **The world moves without the player.** An ignored dilemma resolves itself after a time limit (e.g. the starving man's condition worsens, then he dies). Gossip spreads. Moods shift. The player can walk away from a dilemma; walking away is also a choice and is recorded as one.
 7. **Playable in Godot** (section 8). One compact village, a third-person player, 6–7 villagers, dialogue, cutscenes.
@@ -121,9 +121,9 @@ There is no LLM in this step.
 ### Convergence (the steer)
 
 - The match score for each ending is the mean of the confidence-weighted evidence on its signature dimensions, with signs applied.
-- **Open phase:** until at least 3 dilemmas are resolved, `dilemma_propose` gets no ending information at all. It also stays blind in the converging phase until a destination is set *(builder's call; the player wants no nudging, only a late steer)*.
+- **Open phase:** until at least 6 dilemmas are resolved, `dilemma_propose` gets no ending information at all. It also stays blind in the converging phase until a destination is set *(builder's call; the player wants no nudging, only a late steer)*.
 - **Converging phase:** from then on, if the top ending leads the next by a clear margin (builder tunes it; start at 0.15) and its score is > 0, that ending becomes the **destination**. Chaos additionally requires `chaos_marks` ≥ 2.
-- If no ending leads clearly, another open dilemma follows. After 5 resolved dilemmas, the top score wins.
+- If no ending leads clearly, another open dilemma follows. After 12 resolved dilemmas, the top score wins.
 - Once a destination is set, the next dilemma is the **climax**: an authored template for that ending, filled with the player's real villagers and history. The destination never changes after it is set.
 - **Tie-breaking:** if scores are exactly equal, use the order 1, 2, 3, 4, 5.
 
@@ -148,11 +148,22 @@ Each climax is a final, irreversible choice. The ending is committed only when t
 
 **Epilogue:** a new LLM task, `epilogue_narrate`, writes 4–6 short lines from the committed facts only. It is validated like other replies: any claimed event must exist. If validation fails, an authored template epilogue filled from the facts is used instead.
 
+## 7a. Emotional payoff (the reason for the references)
+
+The player picked Elden Ring, Silksong, Expedition 33 and Hollow Knight because their **endings are emotionally strong**. The rules NPCasso takes from them:
+
+- **The ending is about people you know, not the world.** Every climax and epilogue centres on the 2–3 villagers with the strongest relationship to the player: highest trust, deepest grievance, or most shared history.
+- **The final choice hurts someone you love.** Each climax puts the two villagers closest to the player on opposite sides wherever the template allows, as in Expedition 33's ending.
+- **Callbacks to small moments.** The game marks small verified moments as **keepsakes**: the first bread Tobin shared, a promise kept, a gift loved. These are `keepsake` flags on events, set by rules, not the LLM. Climaxes, cutscenes and epilogues call them back: the same bread on the final table, the promise quoted word for word.
+- **Lives that ended off-screen.** As in Elden Ring, a villager's fate can play out while the player is elsewhere, and the epilogue names it plainly.
+- **Quiet after the storm.** Every ending cutscene ends with a long, quiet, ordinary shot: a table, a grave, a road. No victory screen.
+- **Music motif:** one recurring theme from the opening, returning in a changed form in each ending.
+
 ## 8. Godot frontend
 
 - **Godot 4** (latest stable 4.x), GDScript, in `godot/` alongside `luanti/`. The Luanti build is kept as-is.
 - **One compact village scene:** square with a well, town hall with a notice board, Tobin's farm and granary, an inn, a few houses, a bell tower, a graveyard. Use free assets with verified CC0 or CC-BY licences (Kenney, Quaternius, Poly Pizza, or similar), listed in `godot/CREDITS.md`.
-- **Mood:** dusk-to-night lighting, fog, warm window light, ambient sound (wind, bell, birds or crickets), a music bed.
+- **Mood:** a world full of people, not a wordless one (player's decision). Villagers talk, call out, argue and gossip within earshot. Lighting runs dusk to night, with fog, warm window light, ambient sound and a music bed.
 - **Player:** third-person controller and camera. Interact prompt when facing a villager within about 2.5 m.
 - **Villagers:** 6–7 from the existing cast: Tobin (farmer), Corin (fisher), Bram (elder), Wren (guard), Nell (baker), Hazel (herbalist), Mira (innkeeper). They stand at their posts with idle animations, turn to face the player, and walk only in scripted moments. Gossip is simulated in the backend tick rather than by physical meetings.
 - **Dialogue UI:** speaker name, line, choice buttons when a dilemma is active, free-text input otherwise.
@@ -181,7 +192,7 @@ New:
   - `POST /dilemma/choose {world, player, dilemma_id, option_id}`: returns consequences, notices and the next state.
   - `POST /tick` (extended): handles dilemma deadlines and proposes the next dilemma.
   - `GET /ending?world&player`: ending, variant, facts and epilogue lines for the cutscene.
-- **Tests (mock LLM):** evidence weights, convergence (including no destination before 3 dilemmas and destination stability), hardness validation, deadline resolution, ending commitment, and the epilogue fallback.
+- **Tests (mock LLM):** evidence weights, convergence (including no destination before 6 dilemmas and destination stability), hardness validation, deadline resolution, ending commitment, and the epilogue fallback.
 
 ## 10. Constraints
 
@@ -215,12 +226,12 @@ The player decided:
 
 Builder's calls:
 
-- About a 15-minute playthrough with 3–4 dilemmas (pacing for one honest run; the video cuts it down).
+- Dilemma count: 8–12, with convergence from 6 and a cap of 12.
 - Arrival on Tobin's cart.
 - The Palimpsest deferred.
 - A cast of 7 villagers.
 - Explicit choice buttons for dilemmas.
-- Convergence after 3 dilemmas, with a 0.15 margin and a cap of 5.
+- Convergence margin 0.15.
 - Climax designs and fallback variants.
 - Gossip simulated in the tick.
 - The fallback-demo cutoff time.
