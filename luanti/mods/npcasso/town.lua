@@ -275,7 +275,8 @@ table.insert(npcasso.layout_extras, function(put, box, pick)
 	box(tx - 2, 6, tz - 2, tx + 2, 6, tz + 2, wood)
 	for x = tx - 2, tx + 2 do put(x, 7, tz - 2, fence); put(x, 7, tz + 2, fence) end
 	for z = tz - 2, tz + 2 do put(tx - 2, 7, z, fence); put(tx + 2, 7, z, fence) end
-	box(tx, 1, tz - 1, tx, 6, tz - 1, ladder)
+	local on_trunk = core.dir_to_wallmounted({x = 0, y = 0, z = 1})  -- ladder hangs on the trunk (+z)
+	for y = 1, 6 do put(tx, y, tz - 1, ladder, on_trunk) end
 	box(tx - 3, 8, tz - 3, tx + 3, 9, tz + 3, leaves)
 	box(tx - 2, 8, tz - 2, tx + 2, 8, tz + 2, "air")
 

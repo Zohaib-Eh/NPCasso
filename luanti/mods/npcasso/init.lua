@@ -447,6 +447,7 @@ local function send(player, msg)
 		say(name, npc_name(t.npc), out and out.reply or (npc_name(t.npc) .. " seems distracted."))
 		npcasso.save_chat(name)
 		apply(name, out)
+		if out and out.point_to then npcasso.point(name, t.npc, out.point_to) end
 		if not t.trading then show_talk(name) end
 	end)
 end

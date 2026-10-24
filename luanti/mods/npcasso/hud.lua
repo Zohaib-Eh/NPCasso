@@ -136,3 +136,68 @@ if core.get_modpath("sfinv_buttons") then
 		action = function(player) npcasso.feed(player, npcasso.empty_hand(player), 0xBBBBBB) end,
 	})
 end
+
+-- Waypoints: a villager points you somewhere; a marker with the distance shows the way until you arrive.
+local PLACE_OFFSETS = {  -- relative to the village square (see town.lua countryside/layout)
+	square = {0, 0}, farm = {-11, -11}, pond = {-45, 24}, orchard = {-73, 0}, meadow = {0, 74},
+	mine = {70, -55}, wheat_field = {-60, -60},
+}
+local waypoints = {}  -- player -> {id, pos, t}
+
+local function target_pos(key)
+	local o = npcasso.village()
+	if not o then return nil end
+	local e = npcasso.npc_entity(key)
+	if e then return e.object:get_pos() end
+	local post = npcasso.posts[key] or (npcasso.landmarks or {})[key]
+	if post then return vector.offset(o, post.x, (post.y or 0) + 1, post.z) end
+	local off = PLACE_OFFSETS[key]
+	if off then return vector.offset(o, off[1], 2, off[2]) end
+	if key == "town_hall" and npcasso.landmarks and npcasso.landmarks.townhall then
+		local p = npcasso.landmarks.townhall
+		return vector.offset(o, p.x, 1, p.z)
+	end
+end
+
+local LABEL = {square = "Village square", farm = "Village farm", pond = "Pond", orchard = "Apple orchard",
+	meadow = "Flower meadow", mine = "The mine", wheat_field = "Wheat field", town_hall = "Town hall"}
+
+function npcasso.point(name, from_npc, key)
+	local player = core.get_player_by_name(name)
+	local pos = target_pos(key)
+	if not (player and pos) then return end
+	if waypoints[name] then player:hud_remove(waypoints[name].id) end
+	local label = LABEL[key] or npcasso.npc_name(key)
+	waypoints[name] = {pos = pos, t = os.time(), key = key, id = player:hud_add({type = "waypoint", name = label,
+		text = "m", number = 0xFFD27F, world_pos = pos, precision = 1})}
+	npcasso.feed(player, npcasso.npc_name(from_npc) .. " points the way: " .. label, 0xFFD27F)
+	-- the villager turns and points (faces the target)
+	local e = npcasso.npc_entity(from_npc)
+	if e then
+		local d = vector.subtract(pos, e.object:get_pos())
+		e.object:set_yaw(math.atan2(-d.x, d.z))
+	end
+end
+
+local wp_t = 0
+core.register_globalstep(function(dtime)
+	wp_t = wp_t + dtime
+	if wp_t < 1 then return end
+	wp_t = 0
+	for name, w in pairs(waypoints) do
+		local p = core.get_player_by_name(name)
+		if not p then
+			waypoints[name] = nil
+		else
+			local e = npcasso.npc_entity(w.key)  -- villagers move: follow them
+			if e then
+				w.pos = e.object:get_pos()
+				p:hud_change(w.id, "world_pos", vector.offset(w.pos, 0, 2, 0))
+			end
+			if vector.distance(p:get_pos(), w.pos) < 5 or os.time() - w.t > 180 then
+				p:hud_remove(w.id)
+				waypoints[name] = nil
+			end
+		end
+	end
+end)
