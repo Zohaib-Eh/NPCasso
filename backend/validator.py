@@ -3,8 +3,8 @@ import re
 
 # Words that assert a past event: an error without a claim. Words common in advice ("a gift of flowers",
 # "hit the stone") only get flagged.
-EVENT_WORDS = ("stole", "steal", "stolen", "theft", "thief", "gave", "broke", "smashed", "promise", "promised")
-SOFT_WORDS = ("gift", "hit")
+EVENT_WORDS = ("stole", "stolen", "gave", "broke", "smashed", "promised")
+SOFT_WORDS = ("gift", "hit", "steal", "theft", "thief", "promise")
 WARM_WORDS = ("friend", "dear", "lovely", "glad", "welcome")
 TEXT_KEY = {"npc_dialogue": "reply", "npc_react": "shout"}
 

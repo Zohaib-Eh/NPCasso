@@ -80,7 +80,8 @@
         }
       ],
       "kind": "trader",
-      "sign": "Elise · Fruit Shop"
+      "sign": "Elise · Fruit Shop",
+      "location": "her fruit shop, west of the square"
     },
     "rowan": {
       "name": "Rowan",
@@ -126,7 +127,8 @@
         }
       ],
       "kind": "trader",
-      "sign": "Rowan · Forge"
+      "sign": "Rowan · Forge",
+      "location": "his forge, east of the square"
     },
     "mira": {
       "name": "Mira",
@@ -169,7 +171,8 @@
         }
       ],
       "kind": "trader",
-      "sign": "Mira · Tavern"
+      "sign": "Mira · Tavern",
+      "location": "the tavern, north-west of the square"
     },
     "tobin": {
       "name": "Tobin",
@@ -214,7 +217,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Tobin's Farmhouse"
+      "sign": "Tobin's Farmhouse",
+      "location": "the village farm, south-west of the square"
     },
     "wren": {
       "name": "Wren",
@@ -259,7 +263,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Watchtower"
+      "sign": "Watchtower",
+      "location": "on watch by the town hall, south of the square"
     },
     "pip": {
       "name": "Pip",
@@ -299,7 +304,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Pip's Treehouse"
+      "sign": "Pip's Treehouse",
+      "location": "running around the square"
     },
     "bram": {
       "name": "Bram",
@@ -337,7 +343,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Bram · Village Elder"
+      "sign": "Bram · Village Elder",
+      "location": "the library at the north end of the village"
     },
     "nell": {
       "name": "Nell",
@@ -382,7 +389,8 @@
         }
       ],
       "kind": "trader",
-      "sign": "Nell · Bakery"
+      "sign": "Nell · Bakery",
+      "location": "the bakery, north-east of the square"
     },
     "corin": {
       "name": "Corin",
@@ -421,7 +429,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Corin's Cabin"
+      "sign": "Corin's Cabin",
+      "location": "his cabin by the pond, far west"
     },
     "hazel": {
       "name": "Hazel",
@@ -461,7 +470,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Hazel · Herbalist"
+      "sign": "Hazel · Herbalist",
+      "location": "her garden house on the west side of the village"
     },
     "dax": {
       "name": "Dax",
@@ -506,7 +516,8 @@
         }
       ],
       "kind": "trader",
-      "sign": "Dax · Ores"
+      "sign": "Dax · Ores",
+      "location": "his ore shop, south-east of the square"
     },
     "lottie": {
       "name": "Lottie",
@@ -546,7 +557,8 @@
         }
       ],
       "kind": "villager",
-      "sign": "Lottie's Cottage"
+      "sign": "Lottie's Cottage",
+      "location": "her cottage by the sheep pen, north-east"
     }
   },
   "world_knowledge": [
@@ -556,5 +568,15 @@
     "Bread: grind wheat into flour on the crafting grid, then bake the flour in a furnace.",
     "Crafting: open your inventory with I and use the crafting grid; tree trunks make wooden planks and planks make sticks.",
     "The village: Elise's fruit stall is west of the square, Rowan's forge east, Mira's inn north, the town hall south-east, the wheat farm south-west, the apple orchard far west, the flower meadow north-west by the pond, and Dax's little mine with coal and iron showing in the rock far south-east."
-  ]
+  ],
+  "places": {
+    "town_hall": "the big town hall south of the square; the quest board and a crafting table are inside",
+    "orchard": "the apple orchard, far west outside the village",
+    "meadow": "the flower meadow with roses, far north outside the village",
+    "mine": "the little mine with coal and iron in the rock, far south-east outside the village",
+    "wheat_field": "the big ripe wheat field, far south-west outside the village",
+    "farm": "the village farm, south-west of the square",
+    "pond": "the pond, far west by Corin's cabin",
+    "square": "the village square, in the middle of everything"
+  }
 }

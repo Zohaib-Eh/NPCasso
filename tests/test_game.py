@@ -102,11 +102,11 @@ def test_talk_retries_then_passes(conn):
 
 def test_talk_two_failures_neutral(conn):
     bad = {"reply": "x", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
-    assert talk(conn, ScriptedLLM([Q, bad, bad]), "w", "p", "elise", "hi", "th1", 1.0)["reply"] == NEUTRAL_LINE
+    assert talk(conn, ScriptedLLM([Q, bad, bad]), "w", "p", "elise", "hi", "th1", 1.0)["reply"] != "x"
 
 
 def test_talk_malformed_llm_neutral(conn):
-    assert talk(conn, ScriptedLLM([None, None, None]), "w", "p", "elise", "hi", "th1", 1.0)["reply"] == NEUTRAL_LINE
+    assert talk(conn, ScriptedLLM([None, None, None]), "w", "p", "elise", "hi", "th1", 1.0)["reply"]
 
 
 def test_apology_once_per_day(conn):
@@ -222,7 +222,7 @@ def test_talk_survives_wrong_types_in_intent(conn, intent):
 def test_talk_survives_wrong_types_in_dialogue(conn):
     bad_claim = {"reply": "x", "claims": [{"event_id": [1], "type": "gift", "how": "witnessed"}]}
     bad_quest = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": "two", "reward": "bread"}}
-    assert talk(conn, ScriptedLLM([Q, bad_claim, bad_claim]), "w", "p", "elise", "hi", "t", 1.0)["reply"] == NEUTRAL_LINE
+    assert talk(conn, ScriptedLLM([Q, bad_claim, bad_claim]), "w", "p", "elise", "hi", "t", 1.0)["reply"].startswith("I could use your help")
     r = talk(conn, ScriptedLLM([Q, bad_quest]), "w", "p", "elise", "hi", "t", 1.0)
     assert r["reply"] == "Bring coal." and r["quest_offer"] is None
 
@@ -241,7 +241,7 @@ def test_false_corrections_cannot_farm_trust(conn):
 
 def test_no_retry_after_llm_error(conn):
     llm = ScriptedLLM([Q, None, {"reply": "late", "claims": []}])
-    assert talk(conn, llm, "w", "p", "elise", "hi", "t", 1.0)["reply"] == NEUTRAL_LINE
+    assert talk(conn, llm, "w", "p", "elise", "hi", "t", 1.0)["reply"].startswith("I could use your help")
     assert len([c for c in llm.calls if c[0] == "npc_dialogue"]) == 1
 
 
@@ -372,8 +372,31 @@ def test_moods(conn):
 
 
 def test_greet_retries_once_on_invalid(conn):
-    bad = {"reply": "You kept your promise!", "claims": []}
+    bad = {"reply": "You promised me iron!", "claims": []}
     good = {"reply": "Morning, newcomer.", "claims": []}
     llm = ScriptedLLM([bad, good])
     assert greet(conn, llm, "w", "p", "elise", "g", 1.0)["reply"] == "Morning, newcomer."
-    assert llm.calls[1][1]["validator_feedback"] == ["unclaimed_mention:promise"]
+    assert llm.calls[1][1]["validator_feedback"] == ["unclaimed_mention:promised"]
+
+
+# --- guidance and pointing ---
+
+def test_context_has_guide(conn):
+    from backend.game import build_context
+    g = build_context(conn, "elise", "w:p")["facts"]["guide"]
+    assert g["suggested"] and all({"title", "giver", "where"} <= set(q) for q in g["suggested"])
+    assert "town_hall" in g["places"] and "rowan" in g["places"]
+    assert g["festival"]["level_needed"] == 3
+
+
+def test_talk_returns_valid_point_to(conn):
+    ok = {"reply": "Rowan's forge is east of the square.", "claims": [], "point_to": "rowan"}
+    assert talk(conn, ScriptedLLM([Q, ok]), "w", "p", "elise", "where is the smith?", "t", 1.0)["point_to"] == "rowan"
+    bad = {"reply": "Over there.", "claims": [], "point_to": "narnia"}
+    assert talk(conn, ScriptedLLM([Q, bad]), "w", "p", "elise", "where?", "t", 1.0)["point_to"] is None
+
+
+def test_failed_reply_falls_back_to_guidance(conn):
+    bad = {"reply": "x", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
+    r = talk(conn, ScriptedLLM([Q, bad, bad]), "w", "p", "elise", "what should I do?", "t", 1.0)
+    assert r["reply"] != NEUTRAL_LINE and r["point_to"]

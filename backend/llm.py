@@ -30,12 +30,17 @@ SYSTEM_PROMPTS = {
     "promise is set only when the player commits to bring something (item as a short lowercase noun, "
     "deadline_days default 1). claim is set only for correction: the event the player says did NOT happen "
     "(type one of gift, theft, vandalism, hit_npc, trade).",
-    "npc_dialogue": _RULES + "Reply to player_message; if it is null, speak first as facts.situation says, "
+    "npc_dialogue": _RULES + "facts.guide says what the player can do next (active and suggested quests, the "
+    "festival) and where every villager and place is. When the player asks what to do, how something works, or where "
+    "something is, guide them concretely and helpfully using facts.guide and facts.world, and set point_to to the "
+    "matching key of facts.guide.places (a villager id or a place) so the game can show them the way; otherwise "
+    "point_to is null. Reply to player_message; if it is null, speak first as facts.situation says, "
     "greeting the player in a way that reflects your memories and how you feel. facts may include new_promise (the player just promised "
     "something) or correction (confirmed=true means the player rightly corrected you; apologise for the mistake; "
     "confirmed=false means the player denies something that really happened). You may offer a small quest using "
     "only item names from items. Reply with JSON only: "
-    '{"reply": str, ' + _CLAIMS + ', "quest_offer": {"item": str, "count": int, "reward": str}|null}',
+    '{"reply": str, ' + _CLAIMS + ', "quest_offer": {"item": str, "count": int, "reward": str}|null, '
+    '"point_to": str|null}',
 }
 
 

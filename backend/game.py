@@ -37,12 +37,45 @@ def build_context(conn, npc_id, player, message=None, extra_facts=None) -> dict:
         "relationship": {"band": rules.band(db.get_trust(conn, npc_id, player))},
         "memories": db.top_memories(conn, npc_id, player),
         "facts": {"world": CONFIG.get("world_knowledge", []) + cfg.get("expertise", []),
+                  "guide": guide(conn, player),
                   "open_promises": [strip(p) for p in promises if p["kind"] == "promise"],
                   "open_quests": [strip(p) for p in promises if p["kind"] == "quest"], **(extra_facts or {})},
         "items": list(CONFIG["items"]),
         "player": {"title": progress.title(progress.player_state(conn, player)["level"])},
         "player_message": message,
     }
+
+
+def guide(conn, player) -> dict:
+    """What the player can do next and where everything is, so villagers can point the way."""
+    j = journal(conn, player)
+    active = [{"title": a["title"], "giver": a["npc"], "giver_id": a["npc_id"], "progress": a["progress"],
+               "where": CONFIG["npcs"][a["npc_id"]].get("location", "")} for a in j["active"]]
+    suggested = [{"title": q["title"], "giver": q["npc"], "giver_id": q["npc_id"],
+                  "where": CONFIG["npcs"][q["npc_id"]].get("location", "")}
+                 for q in available_quests(conn, player) if q.get("main")][:3]
+    places = {**{n: f"{c['name']}: {c.get('location', '')}" for n, c in CONFIG["npcs"].items()},
+              **CONFIG.get("places", {})}
+    f = festival_status(conn, player)
+    return {"active_quests": active, "suggested": suggested, "places": places,
+            "festival": {"eligible": f["eligible"], "level": f["level"], "level_needed": f["level_needed"],
+                         "main_quests_left": len(f["missing_main"])}}
+
+
+def guidance_line(ctx, speaker) -> tuple[str, str]:
+    """When the model can't produce a valid reply, still help: point at the next thing to do."""
+    g = ctx["facts"]["guide"]
+    if g["active_quests"]:
+        a = g["active_quests"][0]
+        if a["giver_id"] == speaker:
+            return f"How's it going with \"{a['title']}\"? I'm still counting on you.", speaker
+        return f"How's it going with \"{a['title']}\"? {a['giver']} is waiting — {a['where']}.", a["giver_id"]
+    if g["suggested"]:
+        s = g["suggested"][0]
+        if s["giver_id"] == speaker:
+            return f"I could use your help, actually: {s['title']}.", speaker
+        return f"{s['giver']} could use a hand: {s['title']}. You'll find them at {s['where']}.", s["giver_id"]
+    return "Have a look at the quest board in the town hall, south of the square.", "town_hall"
 
 
 def log_call(conn, task, npc_id, player, thread_id, user, res, vres=None, retried=False, prev_id=None) -> int:
@@ -489,7 +522,8 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
         extra = {}
 
     ctx = build_context(conn, npc_id, player, message, extra)
-    reply, offer, prev = NEUTRAL_LINE, None, None
+    reply, point_to = guidance_line(ctx, npc_id)
+    offer, prev = None, None
     for attempt in range(2):
         res = llm.complete("npc_dialogue", ctx, thread_id)
         vres = validate("npc_dialogue", res.data, ctx)
@@ -498,6 +532,8 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
             break  # timeout or network error: retrying would blow the game's HTTP budget
         if vres["ok"]:
             reply = res.data["reply"]
+            p = res.data.get("point_to")
+            point_to = p if isinstance(p, str) and p in ctx["facts"]["guide"]["places"] else None
             if res.data.get("quest_offer") and not vres["drop_quest"]:
                 offer = res.data["quest_offer"]
             break
@@ -508,4 +544,4 @@ def talk(conn, llm, world, player, npc_id, message, thread_id, game_time) -> dic
         db.add_promise(conn, "quest", npc_id, player, offer["item"], count, None,
                        json.dumps([reward] if reward else []), title=f"{count} {offer['item']} for {cfg['name']}",
                        xp=20, trust=20, total=count)
-    return {"reply": reply, "notices": notices, "quest_offer": offer}
+    return {"reply": reply, "notices": notices, "quest_offer": offer, "point_to": point_to}
