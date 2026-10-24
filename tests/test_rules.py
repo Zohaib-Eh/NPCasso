@@ -49,3 +49,9 @@ def test_every_villager_has_one_main_quest_with_known_item():
         assert len(mains) == 1, npc_id
         assert mains[0]["kind"] == "slay" or mains[0]["item"] in cfg["items"], npc_id
         assert 0 <= npc["chattiness"] <= 1
+
+
+def test_main_quests_are_short():
+    for npc_id, npc in load_config()["npcs"].items():
+        main = next(q for q in npc["quests"] if q["main"])
+        assert main["count"] <= 5, npc_id

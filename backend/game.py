@@ -367,7 +367,7 @@ def tick(conn, llm, world, player, game_time) -> dict:
 
 # Harvest Festival ---------------------------------------------------------------------------------
 
-FESTIVAL_LEVEL = 4
+FESTIVAL_LEVEL = 3  # short hackathon game
 FESTIVAL_HOST = "bram"
 VOTE_TEMPLATE = {"for": "I vote for.", "abstain": "I abstain.", "against": "I vote against."}
 

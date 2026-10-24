@@ -51,3 +51,9 @@ def test_festival_vote_then_speeches_on_demand(conn):
     assert "you vote for" in llm.calls[0][1]["facts"]["situation"]
     assert any(m["text"] == "at the Harvest Festival the village accepted the newcomer"
                for m in db.top_memories(conn, "pip", "w:p", limit=20))
+
+
+def test_festival_needs_level_3_only(conn):
+    make_eligible(conn)
+    conn.execute("update players set xp = 150")
+    assert game.festival_status(conn, "w:p")["eligible"] and game.FESTIVAL_LEVEL == 3

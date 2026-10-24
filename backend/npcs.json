@@ -60,7 +60,7 @@
       },
       "skin": "character_2.png",
       "expertise": [
-        "Apples grow on apple trees and fall when you break the leaves.",
+        "The orchard at the west edge of the village is full of apple trees.",
         "A wooden hoe is two planks and two sticks on the crafting grid."
       ],
       "chattiness": 0.5,
@@ -111,9 +111,9 @@
       "quests": [
         {
           "id": "iron_for_rowan",
-          "title": "Bring Rowan 5 iron ingots",
+          "title": "Bring Rowan 3 iron ingots",
           "kind": "bring",
-          "count": 5,
+          "count": 3,
           "reward": [
             "default:pick_steel"
           ],
@@ -195,9 +195,9 @@
       "quests": [
         {
           "id": "wheat_harvest",
-          "title": "Harvest 10 wheat for Tobin",
+          "title": "Harvest 5 wheat for Tobin",
           "kind": "bring",
-          "count": 10,
+          "count": 5,
           "reward": [
             "farming:bread 5"
           ],
@@ -238,9 +238,9 @@
       "quests": [
         {
           "id": "slay_monsters",
-          "title": "Slay 3 monsters for Wren",
+          "title": "Slay 2 monsters for Wren",
           "kind": "slay",
-          "count": 3,
+          "count": 2,
           "reward": [
             "default:sword_steel"
           ],
@@ -312,9 +312,9 @@
       "quests": [
         {
           "id": "village_tour",
-          "title": "Bring Bram 2 loaves for the elders' table",
+          "title": "Bring Bram a loaf for the elders' table",
           "kind": "bring",
-          "count": 2,
+          "count": 1,
           "reward": [
             "default:gold_ingot"
           ],
@@ -355,9 +355,9 @@
       "quests": [
         {
           "id": "flour_for_nell",
-          "title": "Bring Nell 5 flour",
+          "title": "Bring Nell 3 flour",
           "kind": "bring",
-          "count": 5,
+          "count": 3,
           "reward": [
             "farming:bread 6"
           ],
@@ -392,9 +392,9 @@
       "quests": [
         {
           "id": "bait_for_corin",
-          "title": "Bring Corin 5 wheat seeds for bait",
+          "title": "Bring Corin 3 wheat seeds for bait",
           "kind": "bring",
-          "count": 5,
+          "count": 3,
           "reward": [
             "farming:bread 2"
           ],
@@ -424,15 +424,15 @@
       ],
       "trade": null,
       "expertise": [
-        "Flowers grow wild in the meadows around the village.",
+        "Roses grow in the meadow north-west of the square, by the pond.",
         "Eating bread or apples restores your strength."
       ],
       "quests": [
         {
           "id": "herbs_for_hazel",
-          "title": "Bring Hazel 5 roses",
+          "title": "Bring Hazel 3 roses",
           "kind": "bring",
-          "count": 5,
+          "count": 3,
           "reward": [
             "farming:bread 3"
           ],
@@ -467,15 +467,15 @@
         "base_price": 3
       },
       "expertise": [
-        "Coal and iron ore are found in stone underground; iron ore is deeper.",
-        "A stone pickaxe mines iron ore."
+        "Coal and iron ore show in the rock at the little mine south-east of the village.",
+        "Smelt iron ore in a furnace with coal to get iron ingots."
       ],
       "quests": [
         {
           "id": "coal_for_dax",
-          "title": "Bring Dax 10 coal",
+          "title": "Bring Dax 4 coal",
           "kind": "bring",
-          "count": 10,
+          "count": 4,
           "reward": [
             "default:steel_ingot 3"
           ],
@@ -505,13 +505,13 @@
       ],
       "trade": null,
       "expertise": [
-        "Sheep give wool when sheared.",
+        "The sheep love wheat; Tobin's farm grows plenty.",
         "Animals follow you if you hold wheat."
       ],
       "quests": [
         {
-          "id": "wool_for_lottie",
-          "title": "Bring Lottie 3 white wool",
+          "id": "wheat_for_lottie",
+          "title": "Bring Lottie 3 wheat for the sheep",
           "kind": "bring",
           "count": 3,
           "reward": [
@@ -520,7 +520,7 @@
           "xp": 35,
           "trust": 15,
           "main": true,
-          "item": "wool"
+          "item": "wheat"
         }
       ]
     }
@@ -531,6 +531,6 @@
     "Farming: make a hoe, till dirt or grass close to water, plant wheat seeds (cut tall grass to find them), and harvest the wheat once it turns golden.",
     "Bread: grind wheat into flour on the crafting grid, then bake the flour in a furnace.",
     "Crafting: open your inventory with I and use the crafting grid; tree trunks make wooden planks and planks make sticks.",
-    "The village: Elise's fruit stall is west of the square, Rowan's forge east, Mira's inn north, the wheat farm south-west."
+    "The village: Elise's fruit stall is west of the square, Rowan's forge east, Mira's inn north, the town hall south-east, the wheat farm south-west, the apple orchard far west, the flower meadow north-west by the pond, and Dax's little mine with coal and iron showing in the rock far south-east."
   ]
 }

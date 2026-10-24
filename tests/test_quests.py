@@ -54,11 +54,11 @@ def test_handin_two_quests_same_item(conn):
 
 def test_slay_quest_progress(conn):
     game.accept_quest(conn, "w:p", "slay_monsters")
-    for i in range(3):
+    for i in range(2):
         r = game.record_event(conn, MockLLM(), {"world": "w", "player": "p", "type": "slay", "target": None,
                                                  "details": {"mob": "mobs_monster:dirt_monster"}, "witnesses": [],
                                                  "game_time": 1.0})
-    assert "Quest complete: Slay 3 monsters for Wren" in r["notices"]
+    assert "Quest complete: Slay 2 monsters for Wren" in r["notices"]
     assert r["give"] == [{"item": "default:sword_steel", "count": 1}] and r["xp_gained"] == 5 + 60
 
 
