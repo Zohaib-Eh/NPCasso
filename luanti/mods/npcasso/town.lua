@@ -11,7 +11,7 @@ local BTN = "style_type[button,button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]"
 -- of that mod (not shipped in this repo, and its world generation is not enabled). Each building is turned so
 -- its door faces the square, and its owner's home spot is right outside that door.
 
-local SCHEMS = core.get_modpath("npcasso") .. "/../mg_villages/schems/"
+local SCHEMS = core.get_modpath("npcasso") .. "/schems_mgv/"  -- copied from Sokomine/mg_villages (GPL-3.0); git-ignored
 local HAVE_SCHEMS = core.read_schematic(SCHEMS .. "well_1.mts", {}) ~= nil
 
 local function store_posts(posts) npcasso.store:set_string("posts", core.serialize(posts)) end
