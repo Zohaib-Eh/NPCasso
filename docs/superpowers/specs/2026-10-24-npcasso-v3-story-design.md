@@ -31,7 +31,7 @@ The frontend moves to **Godot 4** (player's decision: Minecraft-style visuals do
 
 ## 3. Non-goals
 
-- The Palimpsest questline and its two outcomes. Deferred; the priest may appear as atmosphere only.
+- *(Moved: the Palimpsest is now in scope as the last milestone. See section 7b.)*
 - Combat, monsters, XP, levels, crafting, trading, the quest board. The Luanti v2 features stay in the Luanti build, frozen.
 - Porting the Luanti village or skins to Godot.
 - Save slots. One save per world name, as today.
@@ -171,6 +171,22 @@ The player picked Elden Ring, Silksong, Expedition 33 and Hollow Knight because 
 - **Quiet after the storm.** Every ending cutscene ends with a long, quiet, ordinary shot: a table, a grave, a road. No victory screen.
 - **Music motif:** one recurring theme from the opening, returning in a changed form in each ending.
 
+## 7b. The Palimpsest (last milestone; player's decision: build it at the end)
+
+This is an optional questline, tracked separately from the main ending. It is built only after the five endings work, and it is the first thing cut if time runs out.
+
+- **The book:** a sacred book in the town hall that eases unbearable memories. It has been misused to bury truths.
+- **The priest:** he warns of tragedies nobody remembers. Clues come from the priest, the records, the graves and contradictory memories.
+- **Its outcome is chosen at the Palimpsest's own climax** (the book in the town hall):
+
+| Ending | Choice | Consequence |
+|---|---|---|
+| 6. The Return of Everything | Destroy the Palimpsest. | Suppressed memories return, old grievances erupt, and Bellwether is destroyed. |
+| 7. What We Carry | Leave the Palimpsest intact and abandon Bellwether. | You refuse to accept the fading of memory as the price of peace, but leave others to live with the consequences. |
+
+- Both outcomes end the game with their own cutscene. The epilogue also names the main ending the player was converging on, if any, without committing it.
+- **Storage:** the questline has its own row, `palimpsest` (player, stage, clues json, outcome).
+
 ## 8. Godot frontend
 
 - **Godot 4** (latest stable 4.x), GDScript, in `godot/` alongside `luanti/`. The Luanti build is kept as-is.
@@ -240,7 +256,6 @@ Builder's calls:
 
 - Dilemma count: 8–12, with convergence from 6 and a cap of 12.
 - Arrival on Tobin's cart.
-- The Palimpsest deferred.
 - A cast of 7 villagers.
 - Explicit choice buttons for dilemmas.
 - Convergence margin 0.15.
