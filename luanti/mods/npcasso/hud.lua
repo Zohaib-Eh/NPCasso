@@ -201,3 +201,39 @@ core.register_globalstep(function(dtime)
 		end
 	end
 end)
+
+-- An "Empty hand" that lives in hotbar slot 1: select it (press 1) and right-click never places anything.
+core.register_craftitem("npcasso:hand", {
+	description = "Empty hand (press 1)\nRight-click talks and opens things, never places blocks",
+	inventory_image = "wieldhand.png",
+	wield_image = "blank.png",
+	stack_max = 1,
+	groups = {not_in_creative_inventory = 1},
+	on_place = function(itemstack, placer, pointed)
+		-- still let you use things you point at (chests, doors, boards), just never place a block
+		if pointed and pointed.type == "node" then
+			local node = core.get_node(pointed.under)
+			local def = core.registered_nodes[node.name]
+			if def and def.on_rightclick then return def.on_rightclick(pointed.under, node, placer, itemstack, pointed) end
+		end
+		return itemstack
+	end,
+	on_drop = function(itemstack) return itemstack end,  -- can't be thrown away
+})
+
+local function ensure_hand(player)
+	local inv = player:get_inventory()
+	if inv:get_stack("main", 1):get_name() == "npcasso:hand" then return end
+	for i = 2, inv:get_size("main") do
+		if inv:get_stack("main", i):get_name() == "npcasso:hand" then inv:set_stack("main", i, "") end
+	end
+	local first = inv:get_stack("main", 1)
+	inv:set_stack("main", 1, "npcasso:hand")
+	if not first:is_empty() then
+		local left = inv:add_item("main", first)
+		if not left:is_empty() then core.add_item(player:get_pos(), left) end
+	end
+end
+
+core.register_on_joinplayer(function(player) core.after(1, function() if player:is_player() then ensure_hand(player) end end) end)
+core.register_on_respawnplayer(function(player) core.after(0.5, function() if player:is_player() then ensure_hand(player) end end) end)
