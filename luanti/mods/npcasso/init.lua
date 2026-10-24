@@ -195,7 +195,7 @@ end
 local function set_look(self)
 	local info = npcasso.npcs[self.npc_id] or {}
 	self.object:set_properties({
-		nametag = (self.near and "(!)  " or "") .. (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
+		nametag = (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
 		nametag_color = "#FFFFFF", nametag_bgcolor = "#00000060",
 		textures = {info.skin or "character.png"},
 	})
@@ -203,6 +203,32 @@ end
 
 npcasso.each_npc, npcasso.find_npc, npcasso.npc_entity, npcasso.npc_name = each_npc, find_npc, npc_entity, npc_name
 npcasso.talk = talk
+
+core.register_entity("npcasso:marker", {
+	initial_properties = {
+		visual = "sprite", textures = {"npcasso_exclaim.png"}, visual_size = {x = 0.35, y = 0.7},
+		physical = false, pointable = false, static_save = false, glow = 14, use_texture_alpha = true,
+	},
+	on_step = function(self, dtime)
+		local parent = self.object:get_attach()
+		if not parent then return self.object:remove() end
+		self.t = (self.t or 0) + dtime
+		self.object:set_attach(parent, "", {x = 0, y = 25 + math.sin(self.t * 3) * 1.2, z = 0})
+	end,
+})
+
+local function set_marker(self, on)
+	if on and not (self.marker and self.marker:get_pos()) then
+		local m = core.add_entity(self.object:get_pos(), "npcasso:marker")
+		if m then
+			m:set_attach(self.object, "", {x = 0, y = 25, z = 0})
+			self.marker = m
+		end
+	elseif not on and self.marker then
+		if self.marker:get_pos() then self.marker:remove() end
+		self.marker = nil
+	end
+end
 
 local ANIM_STAND, ANIM_WALK = {x = 0, y = 79}, {x = 168, y = 187}
 npcasso.ANIM_STAND, npcasso.ANIM_WALK = ANIM_STAND, ANIM_WALK
@@ -288,6 +314,7 @@ core.register_entity("npcasso:npc", {
 			local p = core.get_player_by_name(name)
 			if t.npc == self.npc_id and p then
 				stop(self)
+				set_marker(self, false)
 				local d = vector.subtract(p:get_pos(), pos)
 				self.object:set_yaw(math.atan2(-d.x, d.z))
 				return
@@ -302,10 +329,10 @@ core.register_entity("npcasso:npc", {
 				if vector.distance(p:get_pos(), pos) < GREET_RANGE then near = true end
 			end
 		end
-		if near ~= (self.near or false) then
-			self.near = near
-			if not npcasso.speaking(self.npc_id) then set_look(self) end
-		end
+		local talking = false
+		for _, t in pairs(talk) do if t.npc == self.npc_id then talking = true end end
+		self.near = near
+		set_marker(self, near and not talking)
 
 		npcasso.life_step(self, dt, pos)  -- roaming, motives, meetings (life.lua)
 	end,
@@ -368,7 +395,7 @@ local function say(name, who, text)
 	if t then table.insert(t.history, {who = who, text = text}) end
 end
 
-local CHAT_KEEP, REGREET_AFTER = 40, 600  -- lines kept per villager; seconds before they greet you anew
+local CHAT_KEEP, REGREET_AFTER = 40, 60  -- lines kept per villager; seconds before they greet you anew
 
 local function load_chat(name, npc_id)
 	local saved = core.deserialize(store:get_string("chat:" .. name .. ":" .. npc_id)) or {}
@@ -810,13 +837,6 @@ local function layout(o)
 	box(-1, -1, -R + 2, 1, -1, R - 2, pick("default:gravel"))
 	box(-R + 2, -1, -1, R - 2, -1, 1, pick("default:gravel"))
 
-	-- Elise's fruit stall (west)
-	for _, c in ipairs({{-9, -2}, {-9, 2}, {-6, -2}, {-6, 2}}) do box(c[1], 0, c[2], c[1], 2, c[2], tree) end
-	box(-9, 3, -2, -6, 3, 2, slab_wood)
-	box(-6, 0, -1, -6, 0, 1, fence)
-	put(-5, 0, -1, "npcasso:apple_crate")   -- in front: Elise sees you take it
-	put(-11, 0, 0, "npcasso:apple_crate")   -- behind her back: she doesn't
-
 	-- Farm (south-west) with a water source in the middle
 	box(-14, -1, -14, -8, -1, -8, pick("farming:soil_wet", "default:dirt"))
 	box(-14, 0, -14, -8, 0, -8, pick("farming:wheat_2", "air"))  -- young: ripe wheat grows out in the fields
@@ -826,11 +846,6 @@ local function layout(o)
 	for _, c in ipairs({{3, 3}, {-3, 3}, {3, -3}, {-3, -3}}) do
 		box(c[1], 0, c[2], c[1], 1, c[2], fence)
 		put(c[1], 2, c[2], lamp)
-	end
-	-- Flowers along the edges (deterministic, so every world looks the same)
-	for i = -16, 16, 3 do
-		for _, z in ipairs({-17, 17}) do put(i, 0, z, flowers[(i % 4) + 1]) end
-		for _, x in ipairs({-17, 17}) do put(x, 0, i, flowers[((i + 1) % 4) + 1]) end
 	end
 	for _, extra in ipairs(npcasso.layout_extras) do extra(put, box, pick) end
 	return nodes
@@ -857,7 +872,7 @@ function npcasso.build_village(player, origin)
 			if e.name == "npcasso:npc" then e.object:remove() end
 		end
 		for id, post in pairs(npcasso.posts) do
-			core.add_entity(vector.offset(o, post.x, 0.5, post.z), "npcasso:npc",
+			core.add_entity(vector.offset(o, post.x, (post.y or 0) + 0.5, post.z), "npcasso:npc",
 				core.serialize({npc_id = id, yaw = post.yaw}))
 		end
 		store:set_string("village", core.serialize(o))

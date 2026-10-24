@@ -40,7 +40,7 @@ local function village_places()
 	if not o then return {} end
 	local list = {}
 	for _, p in ipairs(npcasso.places or {}) do table.insert(list, vector.offset(o, p.x, 0, p.z)) end
-	for _, post in pairs(npcasso.posts) do table.insert(list, vector.offset(o, post.x, 0, post.z)) end
+	for _, post in pairs(npcasso.posts) do table.insert(list, vector.offset(o, post.x, post.y or 0, post.z)) end
 	return list
 end
 
@@ -131,10 +131,33 @@ local function arrive(self, pos)
 	if vector.distance(pos, self.home) < 1.5 then self.object:set_yaw(self.post_yaw) end
 end
 
+-- A trader's shop footprint (relative box) if they have one: they only wander inside it.
+local function shop_box(self)
+	local post, o = npcasso.posts[self.npc_id], npcasso.village()
+	if post and post.box and o then return post.box, o end
+end
+
+local function shop_spot(box, o)
+	for _ = 1, 12 do
+		local p = {x = o.x + math.random(box.x1, box.x2), y = o.y + (box.y or 0), z = o.z + math.random(box.z1, box.z2)}
+		local below = core.registered_nodes[core.get_node(vector.offset(p, 0, -1, 0)).name]
+		if core.get_node(p).name == "air" and core.get_node(vector.offset(p, 0, 1, 0)).name == "air"
+			and below and below.walkable then return p end
+	end
+end
+
 local function walk(self, dt, pos)
 	if not self.dest then
 		self.rest = (self.rest or 0) - dt
 		if self.rest > 0 then return end
+		local box, o = shop_box(self)
+		if box then  -- traders potter about their own shop, day and night
+			self.dest = math.random() < 0.4 and self.home or shop_spot(box, o)
+			if not self.dest then self.rest = 10; return end
+			self.path, self.walk_t = nil, 0
+		end
+	end
+	if not self.dest then
 		if is_day() and not self.errand and math.random() < 0.55 then
 			local places = village_places()
 			self.dest = #places > 0 and vector.round(places[math.random(#places)]) or self.home
@@ -212,12 +235,14 @@ function npcasso.life_step(self, dt, pos)
 		if mood == "afraid" and pdist < 8 then return flee(self, away, FLEE_SPEED) end
 		if mood == "hostile" and pdist < 4 then return flee(self, away, WALK_SPEED) end
 		if mood == "wary" and pdist < 6 then halt(self); self.dest = nil; return face(self, ppos) end
-		if mood == "friendly" and pdist < 14 and pdist > 3.5 and now() >= (self.next_visit or 0) then
+		if mood == "friendly" and pdist < 14 and pdist > 3.5 and now() >= (self.next_visit or 0)
+			and not shop_box(self) then
 			self.next_visit = now() + 300
 			self.dest, self.path, self.walk_t = vector.round(ppos), {vector.round(ppos)}, 0
 			self.wp = 1
 		end
 	end
+	if self.errand and shop_box(self) then self.errand = nil end  -- traders don't leave their shop
 	if self.errand then
 		local w = npcasso.npc_entity(self.errand)
 		if not w then

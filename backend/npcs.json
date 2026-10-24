@@ -58,7 +58,7 @@
         "cost": "iron",
         "base_price": 1
       },
-      "skin": "character_2.png",
+      "skin": "npcasso_skin_elise.png",
       "expertise": [
         "The orchard at the west edge of the village is full of apple trees.",
         "A wooden hoe is two planks and two sticks on the crafting grid."
@@ -104,7 +104,7 @@
         "min_level": 2
       },
       "work_block": "cottages:anvil",
-      "skin": "character_5.png",
+      "skin": "npcasso_skin_rowan.png",
       "expertise": [
         "A stone pickaxe is three cobblestone above two sticks; a steel one needs three iron ingots.",
         "Coal ore sits in stone and fuels any furnace."
@@ -147,7 +147,7 @@
         "cost": "apple",
         "base_price": 2
       },
-      "skin": "character_8.png",
+      "skin": "npcasso_skin_mira.png",
       "expertise": [
         "Sleep in a bed at night to skip to morning.",
         "Everyone in the village talks; what one person sees, the others hear about."
@@ -174,7 +174,7 @@
     "tobin": {
       "name": "Tobin",
       "role": "Farmer",
-      "skin": "character_3.png",
+      "skin": "npcasso_skin_tobin.png",
       "chattiness": 0.5,
       "persona": "Patient and hardworking; measures people by whether they pull their weight.",
       "background": "Has farmed the south-west field since he was a boy.",
@@ -219,7 +219,7 @@
     "wren": {
       "name": "Wren",
       "role": "Guard",
-      "skin": "character_6.png",
+      "skin": "npcasso_skin_wren.png",
       "chattiness": 0.6,
       "persona": "Stern, dutiful, keeps a mental ledger of every crime; fair to those who help the village.",
       "background": "Keeps watch from the town hall; lost a brother to monsters years ago.",
@@ -264,7 +264,7 @@
     "pip": {
       "name": "Pip",
       "role": "Kid",
-      "skin": "character_9.png",
+      "skin": "npcasso_skin_pip.png",
       "chattiness": 1.0,
       "persona": "Curious, cheeky, can't keep a secret; loves snacks and adventure stories.",
       "background": "Runs errands for everyone and hears everything.",
@@ -304,7 +304,7 @@
     "bram": {
       "name": "Bram",
       "role": "Elder",
-      "skin": "character_1.png",
+      "skin": "npcasso_skin_bram.png",
       "chattiness": 0.4,
       "persona": "Wise, measured, values tradition and fairness; speaks for the village.",
       "background": "The village elder; hosts the Harvest Festival in the town hall.",
@@ -342,7 +342,7 @@
     "nell": {
       "name": "Nell",
       "role": "Baker",
-      "skin": "character_7.png",
+      "skin": "npcasso_skin_nell.png",
       "chattiness": 0.8,
       "persona": "Warm, motherly, nosy; feeds everyone and knows everyone's business.",
       "background": "Bakes for the whole village; her bread is famous.",
@@ -387,7 +387,7 @@
     "corin": {
       "name": "Corin",
       "role": "Fisher",
-      "skin": "character_4.png",
+      "skin": "npcasso_skin_corin.png",
       "chattiness": 0.3,
       "persona": "Quiet, superstitious, patient; distrusts loud people.",
       "background": "Fishes at the village pond at dawn and dusk.",
@@ -426,7 +426,7 @@
     "hazel": {
       "name": "Hazel",
       "role": "Herbalist",
-      "skin": "character_10.png",
+      "skin": "npcasso_skin_hazel.png",
       "chattiness": 0.5,
       "persona": "Gentle, thoughtful, speaks softly; believes everyone can mend their ways.",
       "background": "Grows herbs and tends the sick.",
@@ -466,7 +466,7 @@
     "dax": {
       "name": "Dax",
       "role": "Miner",
-      "skin": "character_5.png",
+      "skin": "npcasso_skin_dax.png",
       "chattiness": 0.4,
       "persona": "Rough, gruff, distrusts newcomers until they prove themselves.",
       "background": "Digs the hills for coal and iron; sells ore to Rowan.",
@@ -511,7 +511,7 @@
     "lottie": {
       "name": "Lottie",
       "role": "Shepherd",
-      "skin": "character_8.png",
+      "skin": "npcasso_skin_lottie.png",
       "chattiness": 0.7,
       "persona": "Cheerful, chatty, adores animals; upset by cruelty.",
       "background": "Keeps the village sheep in the pen by the meadow.",

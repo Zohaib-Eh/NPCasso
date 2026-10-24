@@ -28,21 +28,24 @@ end
 
 -- who: villager id whose home this is (post = outside the door); home_only: they keep their work post elsewhere.
 local BUILDINGS = {
-	{who = "townhall", scm = "chateau_without_garden", yoff = -1, at = {0, -31}},
-	{who = "mira", scm = "taverne_1", yoff = 0, at = {0, 31}},
-	{who = "bram", scm = "library_1_0", yoff = 0, at = {-24, 26}},
-	{who = "nell", scm = "baking_house_1", yoff = 0, at = {22, 26}},
-	{who = "rowan", scm = "forge_1", yoff = 0, at = {30, 0}},
-	{who = "hazel", scm = "house_with_garden_1_0", yoff = 0, at = {-31, -8}},
-	{who = "elise", scm = "small_house_1_0", yoff = 0, at = {-20, -10}, home_only = true},
-	{who = "tobin", scm = "house_1_0", yoff = 0, at = {-22, -21}, home_only = true},
-	{who = "corin", scm = "logcabin1", yoff = 0, at = {-31, 14}, home_only = true},
-	{who = "lottie", scm = "default_town_house_tiny_1", yoff = 1, at = {37, 22}},
-	{who = "dax", scm = "default_town_house_small", yoff = -4, at = {29, -23}},
-	{who = "wren_tower", scm = "tower_1_0", yoff = 0, at = {18, -14}},
+	{who = "townhall", scm = "chateau_without_garden", yoff = -1, at = {0, -34}, sign = "Town Hall · Quests inside"},
+	-- traders: bigger shops near the square; they stay inside
+	{who = "elise", scm = "lumberjack_shop_1", yoff = 1, at = {-20, 0}, trader = true, sign = "Elise · Fruit Shop"},
+	{who = "rowan", scm = "forge_1", yoff = 0, at = {20, 0}, trader = true, sign = "Rowan · Forge"},
+	{who = "nell", scm = "baking_house_4", yoff = 0, at = {16, 18}, trader = true, sign = "Nell · Bakery"},
+	{who = "mira", scm = "taverne_1", yoff = 0, at = {-16, 20}, trader = true, sign = "Mira · Tavern"},
+	{who = "dax", scm = "trader_clay_4", yoff = 1, at = {22, -16}, trader = true, sign = "Dax · Ores"},
+	-- villagers' homes, further out
+	{who = "bram", scm = "library_1_0", yoff = 0, at = {0, 38}, sign = "Bram · Village Elder"},
+	{who = "hazel", scm = "house_with_garden_1_0", yoff = 0, at = {-38, 6}, sign = "Hazel · Herbalist"},
+	{who = "tobin", scm = "house_1_0", yoff = 0, at = {-32, -20}, home_only = true, sign = "Tobin's Farmhouse"},
+	{who = "corin", scm = "logcabin1", yoff = 0, at = {-36, 28}, home_only = true, sign = "Corin's Cabin"},
+	{who = "lottie", scm = "default_town_house_tiny_1", yoff = 1, at = {38, 24}, sign = "Lottie's Cottage"},
+	{who = "wren", scm = "tower_1_0", yoff = 0, at = {24, -38}, home_only = true, sign = "Watchtower"},
 	{scm = "well_1", yoff = 0, at = {-5, 5}},
 }
 
+npcasso.landmarks = {}  -- named places (town hall door, ...) that aren't anyone's home
 local SIDES = {"+z", "+x", "-z", "-x"}  -- rotating 90 degrees moves one step along this list
 local UNIT = {["+z"] = {0, 1}, ["+x"] = {1, 0}, ["-z"] = {0, -1}, ["-x"] = {-1, 0}}
 local function index_of(t, v) for i, x in ipairs(t) do if x == v then return i end end end
@@ -104,7 +107,39 @@ local function place_building(o, b)
 	else
 		out = {x = center.x + unit[1] * 8, y = o.y, z = center.z + unit[2] * 8}
 	end
-	return out, unit
+	return out, unit, minp, maxp, door
+end
+
+local function walkable(p) local d = core.registered_nodes[core.get_node(p).name]; return d and d.walkable end
+local function free(p) return core.get_node(p).name == "air" end
+
+-- Indoor floor cells (roof overhead) at street level, nearest the door first.
+local function indoor_cells(o, minp, maxp, door)
+	local cells = {}
+	for x = minp.x + 1, maxp.x - 1 do
+		for z = minp.z + 1, maxp.z - 1 do
+			for dy = 0, 2 do  -- some buildings have a raised ground floor
+				local p = {x = x, y = o.y + dy, z = z}
+				if free(p) and free(vector.offset(p, 0, 1, 0)) and walkable(vector.offset(p, 0, -1, 0)) then
+					for h = 2, 14 do
+						if not free(vector.offset(p, 0, h, 0)) then table.insert(cells, p); break end
+					end
+					break
+				end
+			end
+		end
+	end
+	local ref = door or {x = (minp.x + maxp.x) / 2, z = (minp.z + maxp.z) / 2}
+	table.sort(cells, function(a, b)
+		return (a.x - ref.x) ^ 2 + (a.z - ref.z) ^ 2 < (b.x - ref.x) ^ 2 + (b.z - ref.z) ^ 2
+	end)
+	return cells
+end
+
+local function sign_at(pos, unit, text)
+	local name = core.registered_nodes["default:sign_wood_yard"] and "default:sign_wood_yard" or "default:sign_wall_wood"
+	core.set_node(pos, {name = name, param2 = core.dir_to_facedir({x = -unit[1], y = 0, z = -unit[2]})})
+	if signs_lib and signs_lib.update_sign then signs_lib.update_sign(pos, {text = text}) end
 end
 
 -- Finds the ground surface (top walkable, non-plant node) at x,z.
@@ -166,25 +201,40 @@ end
 function npcasso.after_layout(o)
 	if HAVE_SCHEMS then
 		for _, b in ipairs(BUILDINGS) do
-			local out, unit = place_building(o, b)
+			local out, unit, minp, maxp, door = place_building(o, b)
 			if out then
-				local rel = {x = out.x - o.x, z = out.z - o.z, yaw = math.atan2(-unit[1], unit[2])}
+				local yaw = math.atan2(-unit[1], unit[2])
+				local function rel(p, face) return {x = p.x - o.x, y = (p.y or o.y) - o.y, z = p.z - o.z, yaw = face or yaw} end
 				local side = {x = unit[2], z = -unit[1]}  -- along the front wall
+				local text = b.sign
+				if text then sign_at(vector.offset(out, side.x * 3, 0, side.z * 3), unit, text) end
+				local inside = indoor_cells(o, minp, maxp, door)
 				if b.who == "townhall" then
-					core.set_node(vector.offset(out, side.x * 2, 0, side.z * 2), {name = "npcasso:quest_board"})
-					core.set_node(vector.offset(out, -side.x * 2, 0, -side.z * 2), {name = "npcasso:crafting_table"})
-					npcasso.posts.wren = {x = rel.x + side.x * 3, z = rel.z + side.z * 3, yaw = rel.yaw}
-				elseif b.who == "rowan" then
-					core.set_node(vector.offset(out, side.x * 2, 0, side.z * 2), {name = "cottages:anvil"})
-					core.set_node(vector.offset(out, -side.x * 2, 0, -side.z * 2), {name = "npcasso:crafting_table"})
-					npcasso.posts.rowan = rel
-				elseif b.who and npcasso.posts and not b.home_only and b.who ~= "wren_tower" then
-					npcasso.posts[b.who] = rel
+					-- the quest room: board and crafting table just inside the door
+					if inside[1] then core.set_node(inside[1], {name = "npcasso:quest_board",
+						param2 = core.dir_to_facedir({x = -unit[1], y = 0, z = -unit[2]})}) end
+					if inside[3] then core.set_node(inside[3], {name = "npcasso:crafting_table"}) end
+					npcasso.landmarks.townhall = rel(out)
+				elseif b.trader and #inside >= 2 then
+					-- traders work inside: their spot is the indoor cell nearest the door; they wander only inside
+					local post = rel(inside[2], yaw + math.pi)
+					post.box = {x1 = minp.x - o.x + 1, z1 = minp.z - o.z + 1, x2 = maxp.x - o.x - 1, z2 = maxp.z - o.z - 1,
+						y = post.y}
+					npcasso.posts[b.who] = post
+					if b.who == "elise" and inside[4] then
+						core.set_node(inside[4], {name = "npcasso:apple_crate"})   -- her stock, in plain sight
+						if inside[#inside] then core.set_node(inside[#inside], {name = "npcasso:apple_crate"}) end  -- back room
+					elseif b.who == "rowan" then
+						core.set_node(vector.offset(out, side.x * 2, 0, side.z * 2), {name = "cottages:anvil"})
+						if inside[4] then core.set_node(inside[4], {name = "npcasso:crafting_table"}) end
+					end
+				elseif b.who and not b.home_only then
+					npcasso.posts[b.who] = rel(out)
 				end
 			end
 		end
 	else
-		core.log("warning", "[npcasso] mg_villages schematics not found at " .. SCHEMS .. "; village has no houses")
+		core.log("warning", "[npcasso] building schematics not found at " .. SCHEMS .. "; village has no houses")
 	end
 	countryside(o)
 	npcasso.save_posts()
@@ -197,14 +247,14 @@ function npcasso.save_posts() store_posts(npcasso.posts) end
 for id, post in pairs({
 	tobin = {x = -11, z = -6, yaw = math.pi},        -- at the village farm
 	pip = {x = 2, z = -2, yaw = 0},                  -- on the square
-	corin = {x = -16, z = 12, yaw = math.pi / 2},    -- on the pond bank
-	wren = {x = 0, z = -14, yaw = math.pi},          -- until the town hall is placed
+	corin = {x = -40, z = 22, yaw = math.pi / 2},    -- on the pond bank
+	wren = {x = 0, z = -16, yaw = math.pi},          -- on watch by the town hall
 }) do npcasso.posts[id] = post end
 load_posts(npcasso.posts)
 
-npcasso.places = {
-	{x = 0, z = 0}, {x = -4, z = 0}, {x = -5, z = 9}, {x = -11, z = -7}, {x = 0, z = -12}, {x = 0, z = 12},
-	{x = 12, z = 0}, {x = -12, z = 0}, {x = -16, z = 12}, {x = 30, z = 32}, {x = 14, z = 12},
+npcasso.places = {  -- villagers wander between these and everyone's front door
+	{x = 0, z = 0}, {x = -5, z = 9}, {x = -11, z = -7}, {x = 0, z = -14}, {x = 0, z = 12},
+	{x = 10, z = 0}, {x = -10, z = 0}, {x = -40, z = 22}, {x = 30, z = 34}, {x = 36, z = -8},
 }
 
 table.insert(npcasso.layout_extras, function(put, box, pick)
@@ -213,14 +263,14 @@ table.insert(npcasso.layout_extras, function(put, box, pick)
 	local ladder = pick("default:ladder_wood")
 
 	-- Pond with a little dock (west) by Corin's cabin
-	box(-23, -2, 9, -16, -1, 15, pick("default:sand"))
-	box(-22, -1, 10, -17, -1, 14, pick("default:water_source"))
-	box(-23, 0, 9, -16, 0, 15, "air")
-	box(-21, -1, 12, -19, -1, 12, pick("default:pine_wood", "default:wood"))
-	put(-19, 0, 12, fence)
+	box(-49, -2, 18, -42, -1, 30, pick("default:sand"))
+	box(-48, -1, 19, -43, -1, 29, pick("default:water_source"))
+	box(-49, 0, 18, -42, 0, 30, "air")
+	box(-45, -1, 22, -42, -1, 22, pick("default:pine_wood", "default:wood"))
+	put(-45, 0, 22, fence)
 
 	-- Pip's treehouse (north-east of the square): a tall trunk, a platform with railings, a ladder up.
-	local tx, tz = 14, 12
+	local tx, tz = 36, -8
 	box(tx, 0, tz, tx, 5, tz, tree)
 	box(tx - 2, 6, tz - 2, tx + 2, 6, tz + 2, wood)
 	for x = tx - 2, tx + 2 do put(x, 7, tz - 2, fence); put(x, 7, tz + 2, fence) end
