@@ -52,6 +52,32 @@ For Mubit: new NPCs reuse the same three tasks (`npc_react`, `intent_classify`, 
    - **Presentation**: a festival window shows each villager in turn with their vote and a one-line speech. Speeches use the existing `npc_dialogue` task (facts.situation = "the village festival vote; you vote <for/against/abstain>; explain why in one or two sentences, citing what you remember"), validated like any reply; on failure a template line is used. Then the ending screen. The result is recorded as an event and remembered (villagers refer to it afterwards).
    - The festival can be held once per save. (`/npcasso debug` can show vote predictions for testing.)
 
+10. **LLM only for the villager who speaks** *(user request)*. State (memories, trust, moods) updates for every
+    villager deterministically, so every later dialogue and reaction reflects everything; only spoken lines cost LLM calls.
+    - Event with several witnesses: one `npc_react` call, for the primary witness (the target if they witnessed it, else
+      the nearest witness). Other witnesses get a free reaction: turn, a "!" bubble, or a template line.
+    - Gossip lines are templates (no LLM). Greetings and talk are already one NPC.
+    - Festival: LLM speeches only for Bram (opening and closing lines) and the strongest opinions (up to 2 highest-trust
+      "for" and 2 lowest-trust "against"); every other villager shows their vote with a template line.
+11. **Motives drive movement** *(user request)*. `GET /moods?world&player` returns `{npc_id: mood}`, for behaviour only
+    (never shown to the player):
+    - `afraid`: hit or threatened by the player within the last 0.5 game-day
+    - `hostile`: band hostile
+    - `wary`: band wary
+    - `friendly`: band friendly
+    - `neutral`: otherwise
+
+    Lua behaviour:
+    - afraid: back away to keep about 8 nodes from the player, occasional "Stay away!" bubble
+    - hostile: turn away and avoid coming within 4 nodes; no auto-talk
+    - wary: stop and watch the player when within 6
+    - friendly: occasionally (5 min cooldown) walk to the player and greet
+    - neutral: roam
+
+    After witnessing a crime, a villager walks to Wren (if Wren exists and is loaded) before resuming. The meeting
+    triggers normal gossip, so news reaches the guard by an actual visit. Moods refresh on every tick and after each
+    event response.
+
 ## Non-goals
 
 - Combat AI changes, custom monster models, boss fights, branching quest trees beyond the main-quests-to-festival line, a quest editor, multiplayer balancing, monster drops economy, NPC routines/schedules.
