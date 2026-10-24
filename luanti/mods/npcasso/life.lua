@@ -18,11 +18,7 @@ local function set_walking(self, walking)
 	self.object:set_animation(walking and npcasso.ANIM_WALK or npcasso.ANIM_STAND, 30, 0)
 end
 
-local function halt(self)
-	local v = self.object:get_velocity()
-	self.object:set_velocity({x = 0, y = v.y, z = 0})
-	set_walking(self, false)
-end
+local function halt(self) npcasso.stop(self) end
 
 local function face(self, target)
 	local d = vector.subtract(target, self.object:get_pos())
@@ -167,6 +163,22 @@ local function walk(self, dt, pos)
 		return
 	end
 	self.walk_t = (self.walk_t or 0) + dt
+	self.stuck_t = (self.stuck_t or 0) + dt
+	if self.stuck_t >= 3 then
+		local moved = self.stuck_from and vector.distance(pos, self.stuck_from) or 99
+		self.stuck_t, self.stuck_from = 0, pos
+		if moved < 0.5 then  -- blocked: skip this waypoint, or give up and rest if it keeps happening
+			self.stuck_count = (self.stuck_count or 0) + 1
+			if self.stuck_count >= 2 then
+				self.stuck_count = 0
+				return arrive(self, pos)
+			end
+			self.wp = self.wp + 1
+			if self.wp > #self.path then return arrive(self, pos) end
+			return
+		end
+		self.stuck_count = 0
+	end
 	if self.walk_t > 40 then  -- lost: head home
 		if vector.distance(self.dest, self.home) < 1 then return arrive(self, pos) end
 		self.dest, self.path, self.walk_t = self.home, nil, 0
@@ -240,7 +252,7 @@ core.register_globalstep(function(dtime)
 	if talk_t < 0.25 then return end
 	local dt = talk_t
 	talk_t = 0
-	if not core.settings:get_bool("npcasso.auto_talk", true) then return end
+	if not core.settings:get_bool("npcasso.auto_talk", false) then return end
 	for _, p in ipairs(core.get_connected_players()) do
 		local name = p:get_player_name()
 		local found

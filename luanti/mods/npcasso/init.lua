@@ -35,6 +35,7 @@ function npcasso.post(path, body, cb) fetch("POST", path, body, cb or function()
 function npcasso.get(path, cb) fetch("GET", path, nil, cb) end
 
 local store = core.get_mod_storage()
+npcasso.store = store
 
 -- World id = save folder name + a random id kept in this save's mod storage. Deleting the save deletes the id,
 -- so a new world with the same name starts with NPCs who remember nothing. Copied saves keep the id but get a
@@ -133,8 +134,8 @@ function npcasso.event(player, type, target, details, witnesses)
 		local e = npc_entity(id)
 		if e then
 			local d = vector.subtract(player:get_pos(), e.object:get_pos())
-			e.path, e.rest, e.meet_until = nil, 5, os.time() + 4
-			e.object:set_velocity({x = 0, y = 0, z = 0})
+			e.rest, e.meet_until = 5, os.time() + 4
+			stop(e)
 			e.object:set_yaw(math.atan2(-d.x, d.z))
 			npcasso.bubble(id, "!", 4)
 			if (type == "theft" or type == "vandalism" or type == "hit_npc") and id ~= "wren" then
@@ -194,7 +195,7 @@ end
 local function set_look(self)
 	local info = npcasso.npcs[self.npc_id] or {}
 	self.object:set_properties({
-		nametag = (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
+		nametag = (self.near and "(!)  " or "") .. (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
 		nametag_color = "#FFFFFF", nametag_bgcolor = "#00000060",
 		textures = {info.skin or "character.png"},
 	})
@@ -210,9 +211,10 @@ local WANDER, WALK_SPEED, GREET_RANGE, GREET_COOLDOWN = 3, 1.2, 5, 180
 local function stop(self)
 	local v = self.object:get_velocity()
 	self.object:set_velocity({x = 0, y = v.y, z = 0})
-	if self.target then self.object:set_animation(ANIM_STAND, 30, 0) end
-	self.target = nil
+	if self.walking ~= false then self.object:set_animation(ANIM_STAND, 30, 0) end
+	self.walking, self.dest, self.path = false, nil, nil
 end
+npcasso.stop = stop
 
 -- Speech bubble: the NPC's nametag shows what they say for a few seconds, then goes back to name and role.
 local bubble_token = {}
@@ -234,6 +236,8 @@ local function wrap(text, width, max_lines)
 	return table.concat(lines, "\n")
 end
 
+function npcasso.speaking(npc_id) return bubble_token[npc_id] ~= nil end
+
 function npcasso.bubble(npc_id, text, secs)
 	local token = {}
 	bubble_token[npc_id] = token
@@ -245,6 +249,7 @@ function npcasso.bubble(npc_id, text, secs)
 	end
 	core.after(secs or 7, function()
 		if bubble_token[npc_id] ~= token then return end
+		bubble_token[npc_id] = nil
 		for _, e in pairs(core.luaentities) do
 			if e.name == "npcasso:npc" and e.npc_id == npc_id then set_look(e) end
 		end
@@ -289,27 +294,17 @@ core.register_entity("npcasso:npc", {
 			end
 		end
 
-		-- Greet players who walk up, once every few minutes each.
-		for _, p in ipairs(core.get_connected_players()) do
-			local name = p:get_player_name()
-			local mood = npcasso.moods[self.npc_id]
-			if mood ~= "afraid" and mood ~= "hostile" and (self.meet_until or 0) <= os.time()
-				and vector.distance(p:get_pos(), pos) < GREET_RANGE and os.time() - (self.greeted[name] or 0) > GREET_COOLDOWN then
-				self.greeted[name] = os.time()
-				stop(self)
-				local d = vector.subtract(p:get_pos(), pos)
-				self.object:set_yaw(math.atan2(-d.x, d.z))
-				self.rest = 6
-				npcasso.post("/greet", {world = npcasso.world(), player = name, npc_id = self.npc_id,
-					thread_id = npcasso.world() .. ":" .. name .. ":" .. self.npc_id .. ":greet:" .. os.time(),
-					game_time = npcasso.game_time()}, function(out)
-					if out and out.reply ~= "" and not talk[name] then
-						npcasso.bubble(self.npc_id, out.reply)
-						npcasso.feed(name, npc_name(self.npc_id) .. ": " .. out.reply, 0xFFD27F)
-						core.chat_send_player(name, core.colorize("#FFD27F", "<" .. npc_name(self.npc_id) .. "> ") .. out.reply)
-					end
-				end)
+		-- A player close by: show "!" on the nametag (right-click to talk). No LLM call until the window opens.
+		local near = false
+		local mood = npcasso.moods[self.npc_id]
+		if mood ~= "afraid" and mood ~= "hostile" then
+			for _, p in ipairs(core.get_connected_players()) do
+				if vector.distance(p:get_pos(), pos) < GREET_RANGE then near = true end
 			end
+		end
+		if near ~= (self.near or false) then
+			self.near = near
+			if not npcasso.speaking(self.npc_id) then set_look(self) end
 		end
 
 		npcasso.life_step(self, dt, pos)  -- roaming, motives, meetings (life.lua)
@@ -373,13 +368,42 @@ local function say(name, who, text)
 	if t then table.insert(t.history, {who = who, text = text}) end
 end
 
+local CHAT_KEEP, REGREET_AFTER = 40, 600  -- lines kept per villager; seconds before they greet you anew
+
+local function load_chat(name, npc_id)
+	local saved = core.deserialize(store:get_string("chat:" .. name .. ":" .. npc_id)) or {}
+	return saved.history or {}, saved.thread, saved.last or 0
+end
+
+function npcasso.save_chat(name)
+	local t = talk[name]
+	if not t then return end
+	while #t.history > CHAT_KEEP do table.remove(t.history, 1) end
+	store:set_string("chat:" .. name .. ":" .. t.npc, core.serialize({history = t.history, thread = t.thread,
+		last = os.time()}))
+end
+
 function npcasso.open_talk(player, npc_id)
 	local name = player:get_player_name()
 	if not talk[name] or talk[name].npc ~= npc_id then
-		talk[name] = {npc = npc_id, history = {}, sent = 0, busy = false,
-			thread = npcasso.world() .. ":" .. name .. ":" .. npc_id .. ":" .. os.time()}
+		local history, thread, last = load_chat(name, npc_id)
+		talk[name] = {npc = npc_id, history = history, sent = 0, busy = false, last = last,
+			thread = thread or (npcasso.world() .. ":" .. name .. ":" .. npc_id)}
 	end
+	local t = talk[name]
 	show_talk(name)
+	if os.time() - (t.last or 0) > REGREET_AFTER and not t.busy then
+		-- The villager speaks first, in the window, shaped by what they remember.
+		t.busy, t.last = true, os.time()
+		npcasso.post("/greet", {world = npcasso.world(), player = name, npc_id = npc_id, thread_id = t.thread,
+			game_time = npcasso.game_time()}, function(out)
+			if talk[name] ~= t then return end
+			t.busy = false
+			if out and out.reply ~= "" then say(name, npc_name(npc_id), out.reply) end
+			npcasso.save_chat(name)
+			if not t.trading then show_talk(name) end
+		end)
+	end
 end
 
 local function send(player, msg)
@@ -394,6 +418,7 @@ local function send(player, msg)
 		if talk[name] ~= t then return end
 		t.busy = false
 		say(name, npc_name(t.npc), out and out.reply or (npc_name(t.npc) .. " seems distracted."))
+		npcasso.save_chat(name)
 		apply(name, out)
 		if not t.trading then show_talk(name) end
 	end)
@@ -516,6 +541,7 @@ core.register_on_player_receive_fields(function(player, formname, fields)
 			npcasso.event(player, "walk_away", t.npc, {messages = t.sent}, {})
 		end
 		npcasso.on_talk_closed(name, t.npc)
+		npcasso.save_chat(name)
 		talk[name] = nil
 	end
 	return true
@@ -758,7 +784,7 @@ end
 -- Village layout around origin o (o = first air node above ground, plaza centre):
 --   Elise's stall west (faces east), Rowan's forge east (faces west), Mira's inn north (door faces south),
 --   farm south-west, gravel cross paths, lamps, flowers. NPCs stand at their posts facing the plaza.
-npcasso.VILLAGE_RADIUS = 42
+npcasso.VILLAGE_RADIUS = 50
 npcasso.layout_extras = {}  -- functions(put, box, pick) adding buildings (town.lua)
 
 local function layout(o)
@@ -791,35 +817,9 @@ local function layout(o)
 	put(-5, 0, -1, "npcasso:apple_crate")   -- in front: Elise sees you take it
 	put(-11, 0, 0, "npcasso:apple_crate")   -- behind her back: she doesn't
 
-	-- Rowan's forge (east)
-	box(10, 0, -3, 10, 3, 3, cobble)
-	box(6, 0, -3, 10, 3, -3, cobble)
-	box(6, 0, 3, 10, 3, 3, cobble)
-	box(6, 4, -3, 10, 4, 3, cobble)
-	put(9, 0, -2, pick("default:furnace"))
-	put(8, 0, 1, pick("cottages:anvil", "npcasso:anvil"))
-	put(9, 0, 2, torch, 1)
-
-	-- Mira's inn (north)
-	box(-4, -1, 8, 4, -1, 14, wood)
-	box(-4, 0, 8, 4, 3, 8, wood)
-	box(-4, 0, 14, 4, 3, 14, wood)
-	box(-4, 0, 8, -4, 3, 14, wood)
-	box(4, 0, 8, 4, 3, 14, wood)
-	box(-4, 4, 8, 4, 4, 14, slab_wood)
-	box(0, 0, 8, 0, 1, 8, "air")                         -- door
-	for _, z in ipairs({10, 12}) do put(-4, 1, z, glass); put(4, 1, z, glass) end
-	put(-2, 1, 8, glass); put(2, 1, 8, glass)
-	local bed_b, bed_t = pick("beds:bed_bottom"), pick("beds:bed_top")
-	if bed_b ~= "air" then
-		for _, x in ipairs({-3, 3}) do put(x, 0, 12, bed_b, 0); put(x, 0, 13, bed_t, 0) end
-	end
-	put(0, 3, 11, lamp)
-	put(-1, 0, 7, torch, 1); put(1, 0, 7, torch, 1)
-
 	-- Farm (south-west) with a water source in the middle
 	box(-14, -1, -14, -8, -1, -8, pick("farming:soil_wet", "default:dirt"))
-	box(-14, 0, -14, -8, 0, -8, pick("farming:wheat_8", "air"))
+	box(-14, 0, -14, -8, 0, -8, pick("farming:wheat_2", "air"))  -- young: ripe wheat grows out in the fields
 	put(-11, -1, -11, pick("default:water_source")); put(-11, 0, -11, "air")
 
 	-- Lamp posts on the plaza corners
@@ -848,10 +848,11 @@ function npcasso.build_village(player, origin)
 	local o = origin or vector.round(player:get_pos())
 	local name = player:get_player_name()
 	core.chat_send_player(name, "[npcasso] Building the village...")
-	local R = npcasso.VILLAGE_RADIUS + 2
-	core.emerge_area(vector.offset(o, -R, -6, -R), vector.offset(o, R, 16, R), function(_, _, remaining)
+	local R = 88  -- village plus the countryside where quest resources are placed
+	core.emerge_area(vector.offset(o, -R, -30, -R), vector.offset(o, R, 30, R), function(_, _, remaining)
 		if remaining > 0 then return end
 		for _, n in ipairs(layout(o)) do core.set_node(n.pos, n.node) end
+		if npcasso.after_layout then npcasso.after_layout(o) end
 		for _, e in pairs(core.luaentities) do  -- rebuilding: replace, don't duplicate, the villagers
 			if e.name == "npcasso:npc" then e.object:remove() end
 		end
@@ -901,13 +902,15 @@ end
 core.after(1, load_until_ready)
 
 core.register_chatcommand("npcasso", {
-	params = "guide | journal | board | home | village | spawn <npc_id> | remove | debug | reload | unstuck",
+	params = "hand | guide | journal | board | home | village | spawn <npc_id> | remove | debug | reload | unstuck",
 	description = "NPCasso tools",
 	privs = {server = true},
 	func = function(name, param)
 		local player = core.get_player_by_name(name)
 		local cmd, arg = param:match("^(%S*)%s*(%S*)")
-		if cmd == "journal" then
+		if cmd == "hand" then
+			return true, npcasso.empty_hand(player)
+		elseif cmd == "journal" then
 			npcasso.show_journal(name)
 			return true
 		elseif cmd == "board" then

@@ -7,189 +7,232 @@ local function short(item) return ItemStack(item):get_short_description() end
 local BTN = "style_type[button,button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]"
 
 -- Village layout -----------------------------------------------------------------------------------
--- Every home is built for its owner: different size, materials and details. Coordinates are relative to the
--- village origin (plaza centre); yaw 0 = +z, pi/2 = -x, -pi/2 = +x, pi = -z.
+-- Buildings are real hand-built schematics from Sokomine's mg_villages (GPL-3.0), loaded from an installed copy
+-- of that mod (not shipped in this repo, and its world generation is not enabled). Each building is turned so
+-- its door faces the square, and its owner's home spot is right outside that door.
 
--- Where each villager lives (and returns at night). Elise, Rowan and Mira keep their workplace posts from init.lua.
+local SCHEMS = core.get_modpath("npcasso") .. "/../mg_villages/schems/"
+local HAVE_SCHEMS = core.read_schematic(SCHEMS .. "well_1.mts", {}) ~= nil
+
+local function store_posts(posts) npcasso.store:set_string("posts", core.serialize(posts)) end
+local function load_posts(posts)
+	for k, v in pairs(core.deserialize(npcasso.store:get_string("posts")) or {}) do posts[k] = v end
+end
+
+-- Blocks the older schematics use that don't exist without mg_villages enabled.
+for from, to in pairs({["doors:door_wood_b_1"] = "doors:door_wood_a", ["doors:door_wood_t_1"] = "doors:hidden",
+		["doors:door_wood_b_2"] = "doors:door_wood_b", ["doors:door_wood_t_2"] = "doors:hidden",
+		["mg_villages:mob_workplace_marker"] = "air"}) do
+	if not core.registered_nodes[from] then core.register_alias(from, to) end
+end
+
+-- who: villager id whose home this is (post = outside the door); home_only: they keep their work post elsewhere.
+local BUILDINGS = {
+	{who = "townhall", scm = "chateau_without_garden", yoff = -1, at = {0, -31}},
+	{who = "mira", scm = "taverne_1", yoff = 0, at = {0, 31}},
+	{who = "bram", scm = "library_1_0", yoff = 0, at = {-24, 26}},
+	{who = "nell", scm = "baking_house_1", yoff = 0, at = {22, 26}},
+	{who = "rowan", scm = "forge_1", yoff = 0, at = {30, 0}},
+	{who = "hazel", scm = "house_with_garden_1_0", yoff = 0, at = {-31, -8}},
+	{who = "elise", scm = "small_house_1_0", yoff = 0, at = {-20, -10}, home_only = true},
+	{who = "tobin", scm = "house_1_0", yoff = 0, at = {-22, -21}, home_only = true},
+	{who = "corin", scm = "logcabin1", yoff = 0, at = {-31, 14}, home_only = true},
+	{who = "lottie", scm = "default_town_house_tiny_1", yoff = 1, at = {37, 22}},
+	{who = "dax", scm = "default_town_house_small", yoff = -4, at = {29, -23}},
+	{who = "wren_tower", scm = "tower_1_0", yoff = 0, at = {18, -14}},
+	{scm = "well_1", yoff = 0, at = {-5, 5}},
+}
+
+local SIDES = {"+z", "+x", "-z", "-x"}  -- rotating 90 degrees moves one step along this list
+local UNIT = {["+z"] = {0, 1}, ["+x"] = {1, 0}, ["-z"] = {0, -1}, ["-x"] = {-1, 0}}
+local function index_of(t, v) for i, x in ipairs(t) do if x == v then return i end end end
+
+-- Which side of the schematic its front door is on: among street-level doors (cellars and upper floors
+-- ignored), the one nearest an outside wall.
+local function door_side(s, yoff)
+	local sx, sy, sz = s.size.x, s.size.y, s.size.z
+	local street = -yoff + 1  -- schematic row the villagers walk on
+	local best, best_d, best_side
+	for z = 0, sz - 1 do for y = math.max(0, street - 1), math.min(sy - 1, street + 1) do for x = 0, sx - 1 do
+		local n = s.data[(z * sy + y) * sx + x + 1]
+		if n and n.name:find("^doors:door") and (n.prob or 255) > 0 then
+			local d = {["-x"] = x, ["+x"] = sx - 1 - x, ["-z"] = z, ["+z"] = sz - 1 - z}
+			for side, v in pairs(d) do
+				if not best_d or v < best_d then best, best_d, best_side = true, v, side end
+			end
+		end
+	end end end
+	return best and best_side or "-z"
+end
+
+local function toward_square(cx, cz)
+	if math.abs(cx) > math.abs(cz) then return cx > 0 and "-x" or "+x" end
+	return cz > 0 and "-z" or "+z"
+end
+
+-- Places one building; returns the world position just outside its door and the outward unit vector.
+local function place_building(o, b)
+	local path = SCHEMS .. b.scm .. ".mts"
+	local s = core.read_schematic(path, {})
+	if not s then return nil end
+	local want = toward_square(b.at[1], b.at[2])
+	local rot = ((index_of(SIDES, want) - index_of(SIDES, door_side(s, b.yoff))) % 4) * 90
+	local unit = UNIT[want]
+	local function put_at(r)
+		local sx, sz = s.size.x, s.size.z
+		if r == 90 or r == 270 then sx, sz = sz, sx end
+		local minp = {x = o.x + b.at[1] - math.floor(sx / 2), y = o.y - 1 + b.yoff, z = o.z + b.at[2] - math.floor(sz / 2)}
+		local maxp = vector.offset(minp, sx - 1, s.size.y - 1, sz - 1)
+		core.place_schematic(minp, path, tostring(r), nil, true)
+		-- front door = the street-level door closest to the square
+		local doors = core.find_nodes_in_area({x = minp.x, y = o.y - 1, z = minp.z}, {x = maxp.x, y = o.y + 1, z = maxp.z},
+			{"group:door"})
+		table.sort(doors, function(a, c)
+			return (a.x - o.x) ^ 2 + (a.z - o.z) ^ 2 < (c.x - o.x) ^ 2 + (c.z - o.z) ^ 2
+		end)
+		return doors[1], minp, maxp
+	end
+	local door, minp, maxp = put_at(rot)
+	local center = {x = o.x + b.at[1], z = o.z + b.at[2]}
+	local function dist2(p) return (p.x - o.x) ^ 2 + (p.z - o.z) ^ 2 end
+	if not door or dist2(door) > dist2(center) then  -- rotation guess was backwards: turn it around
+		door, minp, maxp = put_at((rot + 180) % 360)
+	end
+	local out
+	if door then
+		out = {x = door.x + unit[1], y = o.y, z = door.z + unit[2]}
+	else
+		out = {x = center.x + unit[1] * 8, y = o.y, z = center.z + unit[2] * 8}
+	end
+	return out, unit
+end
+
+-- Finds the ground surface (top walkable, non-plant node) at x,z.
+local function surface(x, z, top, bottom)
+	for y = top, bottom, -1 do
+		local n = core.get_node({x = x, y = y, z = z}).name
+		local def = core.registered_nodes[n]
+		if def and def.walkable and not n:find("leaves") and not n:find("tree") and not n:find("log") then return y end
+	end
+end
+
+-- Quest resources live out in the countryside (between the village and the soft border).
+local function countryside(o)
+	local function at(dx, dz) local y = surface(o.x + dx, o.z + dz, o.y + 25, o.y - 25); return y end
+	local function set(dx, y, dz, name) core.set_node({x = o.x + dx, y = y, z = o.z + dz}, {name = name}) end
+	local tree, leaves, apple = "default:tree", "default:leaves", "default:apple"
+	-- Apple orchard, far west
+	for dx = -80, -66, 5 do
+		for dz = -12, 12, 6 do
+			local y = at(dx, dz)
+			if y then
+				for h = 1, 3 do set(dx, y + h, dz, tree) end
+				for ax = -1, 1 do for az = -1, 1 do for ay = 4, 5 do set(dx + ax, y + ay, dz + az, leaves) end end end
+				set(dx, y + 6, dz, leaves)
+				set(dx + 1, y + 3, dz, apple); set(dx - 1, y + 3, dz + 1, apple)
+			end
+		end
+	end
+	-- Flower meadow, far north
+	local flowers = {"flowers:rose", "flowers:tulip", "flowers:viola", "flowers:dandelion_yellow", "flowers:rose"}
+	for dx = -14, 14, 2 do
+		for dz = 66, 82, 2 do
+			local y = at(dx, dz)
+			if y then set(dx, y + 1, dz, flowers[((dx + dz) % 5) + 1]) end
+		end
+	end
+	-- Dax's mine hill with coal and iron showing, far south-east
+	local base = at(70, -55) or o.y - 1
+	for h = 0, 4 do
+		for dx = 64 + h, 76 - h do for dz = -61 + h, -49 - h do set(dx, base + 1 + h, dz, "default:stone") end end
+	end
+	for i = 0, 12 do
+		set(64 + i, base + 1, -49, i % 2 == 0 and "default:stone_with_coal" or "default:stone_with_iron")
+		set(64, base + 1 + (i % 3), -61 + i, i % 3 == 0 and "default:stone_with_iron" or "default:stone_with_coal")
+	end
+	set(70, base + 6, -55, "default:torch")
+	-- Big wheat field, far south-west (flattened to one level, with a water channel)
+	local fy = at(-60, -60) or o.y - 1
+	for dx = -66, -54 do
+		for dz = -66, -54 do
+			for y = fy + 1, fy + 6 do set(dx, y, dz, "air") end
+			if dx == -60 then set(dx, fy, dz, "default:water_source")
+			else set(dx, fy, dz, "farming:soil_wet"); set(dx, fy + 1, dz, "farming:wheat_8") end
+		end
+	end
+end
+
+-- Run by build_village after the base layout, before villagers are spawned.
+function npcasso.after_layout(o)
+	if HAVE_SCHEMS then
+		for _, b in ipairs(BUILDINGS) do
+			local out, unit = place_building(o, b)
+			if out then
+				local rel = {x = out.x - o.x, z = out.z - o.z, yaw = math.atan2(-unit[1], unit[2])}
+				local side = {x = unit[2], z = -unit[1]}  -- along the front wall
+				if b.who == "townhall" then
+					core.set_node(vector.offset(out, side.x * 2, 0, side.z * 2), {name = "npcasso:quest_board"})
+					core.set_node(vector.offset(out, -side.x * 2, 0, -side.z * 2), {name = "npcasso:crafting_table"})
+					npcasso.posts.wren = {x = rel.x + side.x * 3, z = rel.z + side.z * 3, yaw = rel.yaw}
+				elseif b.who == "rowan" then
+					core.set_node(vector.offset(out, side.x * 2, 0, side.z * 2), {name = "cottages:anvil"})
+					core.set_node(vector.offset(out, -side.x * 2, 0, -side.z * 2), {name = "npcasso:crafting_table"})
+					npcasso.posts.rowan = rel
+				elseif b.who and npcasso.posts and not b.home_only and b.who ~= "wren_tower" then
+					npcasso.posts[b.who] = rel
+				end
+			end
+		end
+	else
+		core.log("warning", "[npcasso] mg_villages schematics not found at " .. SCHEMS .. "; village has no houses")
+	end
+	countryside(o)
+	npcasso.save_posts()
+end
+
+-- Villagers' home spots (computed from where the doors ended up) are saved with the world.
+function npcasso.save_posts() store_posts(npcasso.posts) end
+
+-- Other villagers' spots that aren't tied to a building.
 for id, post in pairs({
-	tobin = {x = -11, z = -6, yaw = math.pi},        -- at the farm
-	wren = {x = 10, z = -8, yaw = 0},                -- in the town hall
+	tobin = {x = -11, z = -6, yaw = math.pi},        -- at the village farm
 	pip = {x = 2, z = -2, yaw = 0},                  -- on the square
 	corin = {x = -16, z = 12, yaw = math.pi / 2},    -- on the pond bank
-	lottie = {x = 27, z = 26, yaw = math.pi / 2},    -- by the sheep pen
-	bram = {x = 0, z = 21, yaw = math.pi},           -- at his hall door
-	nell = {x = 10, z = 19, yaw = math.pi},          -- outside the bakery
-	hazel = {x = -10, z = 21, yaw = math.pi},        -- in her garden
-	dax = {x = 26, z = -26, yaw = 0},                -- by the mine
+	wren = {x = 0, z = -14, yaw = math.pi},          -- until the town hall is placed
 }) do npcasso.posts[id] = post end
+load_posts(npcasso.posts)
 
 npcasso.places = {
-	{x = 0, z = 0}, {x = 0, z = 7}, {x = -11, z = -7}, {x = 10, z = -5}, {x = -4, z = 0}, {x = -16, z = 12},
-	{x = 17, z = 26}, {x = 5, z = 0}, {x = -30, z = -3}, {x = -18, z = 20}, {x = 28, z = -26}, {x = 10, z = 19},
-	{x = 17, z = -13}, {x = -3, z = -3}, {x = 3, z = 3}, {x = 0, z = -20}, {x = -20, z = 0},
+	{x = 0, z = 0}, {x = -4, z = 0}, {x = -5, z = 9}, {x = -11, z = -7}, {x = 0, z = -12}, {x = 0, z = 12},
+	{x = 12, z = 0}, {x = -12, z = 0}, {x = -16, z = 12}, {x = 30, z = 32}, {x = 14, z = 12},
 }
 
 table.insert(npcasso.layout_extras, function(put, box, pick)
-	local wood, cobble, glass = pick("default:wood"), pick("default:cobble"), pick("default:glass")
-	local torch, lamp = pick("default:torch"), pick("default:meselamp", "default:torch")
-	local slab_wood, fence = pick("stairs:slab_wood", "default:wood"), pick("default:fence_wood", "default:wood")
-	local bed_b, bed_t = pick("beds:bed_bottom"), pick("beds:bed_top")
-	local tree, leaves, apple = pick("default:tree"), pick("default:leaves"), pick("default:apple")
+	local wood, fence = pick("default:wood"), pick("default:fence_wood", "default:wood")
+	local tree, leaves = pick("default:tree"), pick("default:leaves")
 	local ladder = pick("default:ladder_wood")
 
-	local function hollow(x1, y1, z1, x2, y2, z2, wall)  -- walls + floor, empty inside
-		box(x1, y1, z1, x2, y2, z2, wall)
-		box(x1 + 1, y1, z1 + 1, x2 - 1, y2, z2 - 1, "air")
-	end
-	local function bed(x, z) if bed_b ~= "air" then put(x, 0, z, bed_b, 0); put(x, 0, z + 1, bed_t, 0) end end
-
-	-- Bram the elder: a big stone-brick hall with bookshelves and glass windows (north).
-	local sb = pick("default:stonebrick", "default:cobble")
-	box(-4, -1, 22, 4, -1, 29, sb)
-	hollow(-4, 0, 22, 4, 4, 29, sb)
-	box(-5, 5, 21, 5, 5, 30, pick("stairs:slab_stonebrick", "default:stonebrick"))
-	box(0, 0, 22, 0, 1, 22, "air")
-	for _, x in ipairs({-2, 2}) do put(x, 2, 22, glass) end
-	for _, z in ipairs({24, 27}) do put(-4, 2, z, glass); put(4, 2, z, glass) end
-	box(-3, 0, 28, 3, 1, 28, pick("default:bookshelf", "default:wood"))
-	bed(-3, 24)
-	put(0, 4, 25, lamp)
-
-	-- Nell the baker: red-brick bakery with an oven outside (north-east).
-	local brick = pick("default:brick", "default:cobble")
-	hollow(8, 0, 20, 13, 3, 24, brick)
-	box(8, -1, 20, 13, -1, 24, wood)
-	box(7, 4, 19, 14, 4, 25, slab_wood)
-	box(10, 0, 20, 10, 1, 20, "air")
-	put(12, 1, 20, glass)
-	box(13, 4, 24, 13, 6, 24, brick)                     -- chimney
-	put(14, 0, 21, pick("default:furnace"))              -- the oven
-	put(11, 0, 23, pick("default:chest"))
-	bed(9, 22)
-
-	-- Hazel the herbalist: a small leafy hut in a flower garden (north-west).
-	hollow(-12, 0, 22, -9, 2, 25, wood)
-	box(-13, 3, 21, -8, 3, 26, leaves)
-	box(-11, 0, 22, -11, 1, 22, "air")
-	bed(-10, 23)
-	local garden = {pick("flowers:rose"), pick("flowers:tulip"), pick("flowers:viola"), pick("flowers:dandelion_yellow")}
-	for x = -14, -7 do for z = 19, 20 do put(x, 0, z, garden[((x + z) % 4) + 1]) end end
-
-	-- Flower meadow (north-west, around the pond): roses for Hazel's and Mira's quests.
-	for x = -26, -14, 2 do
-		for z = 15, 28, 3 do put(x, 0, z, garden[((x * 3 + z) % 4) + 1]) end
-	end
-
-	-- Pond with Corin's pine shack and a little dock (west).
+	-- Pond with a little dock (west) by Corin's cabin
 	box(-23, -2, 9, -16, -1, 15, pick("default:sand"))
 	box(-22, -1, 10, -17, -1, 14, pick("default:water_source"))
 	box(-23, 0, 9, -16, 0, 15, "air")
-	local pine = pick("default:pine_wood", "default:wood")
-	hollow(-28, 0, 10, -24, 2, 14, pine)
-	box(-29, 3, 9, -23, 3, 15, pick("stairs:slab_pine_wood", "default:pine_wood"))
-	box(-24, 0, 12, -24, 1, 12, "air")
-	bed(-27, 11)
-	box(-21, -1, 12, -19, -1, 12, pine)                  -- dock planks over the water
+	box(-21, -1, 12, -19, -1, 12, pick("default:pine_wood", "default:wood"))
 	put(-19, 0, 12, fence)
 
-	-- Apple orchard (far west): Elise's apples grow here.
-	for x = -40, -30, 4 do
-		for z = -12, 8, 5 do
-			box(x, 0, z, x, 2, z, tree)
-			box(x - 1, 3, z - 1, x + 1, 4, z + 1, leaves)
-			put(x, 5, z, leaves)
-			put(x + 1, 2, z, apple); put(x - 1, 2, z + 1, apple)
-		end
-	end
+	-- Pip's treehouse (north-east of the square): a tall trunk, a platform with railings, a ladder up.
+	local tx, tz = 14, 12
+	box(tx, 0, tz, tx, 5, tz, tree)
+	box(tx - 2, 6, tz - 2, tx + 2, 6, tz + 2, wood)
+	for x = tx - 2, tx + 2 do put(x, 7, tz - 2, fence); put(x, 7, tz + 2, fence) end
+	for z = tz - 2, tz + 2 do put(tx - 2, 7, z, fence); put(tx + 2, 7, z, fence) end
+	box(tx, 1, tz - 1, tx, 6, tz - 1, ladder)
+	box(tx - 3, 8, tz - 3, tx + 3, 9, tz + 3, leaves)
+	box(tx - 2, 8, tz - 2, tx + 2, 8, tz + 2, "air")
 
-	-- Elise's acacia cottage at the orchard's edge (west).
-	local acacia = pick("default:acacia_wood", "default:wood")
-	hollow(-27, 0, -7, -22, 3, -2, acacia)
-	box(-28, 4, -8, -21, 4, -1, pick("stairs:slab_acacia_wood", "default:acacia_wood"))
-	box(-22, 0, -5, -22, 1, -5, "air")
-	put(-22, 2, -3, glass)
-	bed(-26, -6)
-
-	-- Pip's treehouse (south-west): a tall trunk, a platform with railings, a ladder up.
-	box(-18, 0, -14, -18, 5, -14, tree)
-	box(-20, 6, -16, -16, 6, -12, wood)
-	for x = -20, -16 do put(x, 7, -16, fence); put(x, 7, -12, fence) end
-	for z = -16, -12 do put(-20, 7, z, fence); put(-16, 7, z, fence) end
-	box(-18, 1, -15, -18, 6, -15, ladder)
-	box(-21, 8, -17, -15, 9, -11, leaves)
-	box(-20, 8, -16, -16, 8, -12, "air")
-
-	-- Tobin's log cabin, hay bales and a second wheat field (south-west).
-	hollow(-25, 0, -26, -20, 3, -21, tree)
-	box(-26, 4, -27, -19, 4, -20, slab_wood)
-	box(-22, 0, -21, -22, 1, -21, "air")
-	bed(-24, -25)
-	local straw = pick("farming:straw", "default:dry_shrub")
-	put(-19, 0, -22, straw); put(-19, 0, -23, straw); put(-19, 1, -22, straw)
-	box(-16, -1, -27, -8, -1, -20, pick("farming:soil_wet", "default:dirt"))
-	box(-16, 0, -27, -8, 0, -20, pick("farming:wheat_8", "air"))
-	box(-12, -1, -27, -12, -1, -20, pick("default:water_source"))
-	box(-12, 0, -27, -12, 0, -20, "air")
-
-	-- Lottie's white wool cottage with a red roof, beside a big sheep pen (north-east).
-	local wool, red = pick("wool:white", "default:wood"), pick("wool:red", "default:wood")
-	hollow(28, 0, 24, 32, 2, 28, wool)
-	box(27, 3, 23, 33, 3, 29, red)
-	box(28, 0, 26, 28, 1, 26, "air")
-	bed(31, 25)
-	for x = 17, 26 do put(x, 0, 22, fence); put(x, 0, 31, fence) end
-	for z = 22, 31 do put(17, 0, z, fence); put(26, 0, z, fence) end
-	put(22, 0, 22, "air")
-	box(18, 0, 23, 25, 0, 30, pick("default:grass_3", "air"))
-
-	-- Wren's watchtower (east of the town hall): tall stone tower, ladder inside, lookout on top.
-	local cob = pick("default:cobble")
-	hollow(16, 0, -15, 18, 7, -13, cob)
-	box(17, 0, -15, 17, 1, -15, "air")
-	box(17, 1, -14, 17, 7, -14, ladder)
-	box(15, 8, -16, 19, 8, -12, wood)
-	for x = 15, 19 do put(x, 9, -16, fence); put(x, 9, -12, fence) end
-	for z = -16, -12 do put(15, 9, z, fence); put(19, 9, z, fence) end
-	put(17, 8, -14, "air")
-	put(15, 10, -16, torch, 1); put(19, 10, -12, torch, 1)
-
-	-- Dax's mossy hut and the little mine: coal and iron showing in the rock (south-east).
-	local moss = pick("default:mossycobble", "default:cobble")
-	hollow(22, 0, -32, 26, 2, -28, moss)
-	box(21, 3, -33, 27, 3, -27, moss)
-	box(24, 0, -28, 24, 1, -28, "air")
-	bed(23, -31)
-	local stone = pick("default:stone")
-	local coal, iron = pick("default:stone_with_coal", "default:stone"), pick("default:stone_with_iron", "default:stone")
-	for h = 0, 3 do box(30 + h, h, -38 + h, 38 - h, h, -30 - h, stone) end
-	for i = 0, 7 do
-		put(30 + i, 0, -30, i % 2 == 0 and coal or iron)  -- ore along the hill's foot, easy to reach
-		put(30, 1, -37 + i, i % 3 == 0 and iron or coal)
-	end
-	box(33, 0, -30, 34, 1, -32, "air")                    -- the mine mouth
-	put(33, 2, -30, torch, 1)
-
-	-- Town hall (south-east of the square): stone floor, wood walls, quest board and crafting table inside.
-	box(6, -1, -14, 14, -1, -6, cobble)
-	hollow(6, 0, -14, 14, 3, -6, wood)
-	box(5, 4, -15, 15, 4, -5, slab_wood)
-	box(10, 0, -6, 10, 1, -6, "air")
-	for _, x in ipairs({8, 12}) do put(x, 1, -6, glass) end
-	put(10, 0, -13, "npcasso:quest_board")
-	put(8, 0, -13, "npcasso:crafting_table")
-	put(10, 3, -10, lamp)
-	put(9, 0, -5, torch, 1); put(11, 0, -5, torch, 1)
-
-	-- Crafting table at Rowan's forge
-	put(7, 0, -2, "npcasso:crafting_table")
-
-	-- Lamp posts along the long paths
-	for _, d in ipairs({10, 20, 30}) do
-		for _, c in ipairs({{2, d}, {-2, -d}, {d, -2}, {-d, 2}}) do
-			box(c[1], 0, c[2], c[1], 1, c[2], fence)
-			put(c[1], 2, c[2], lamp)
-		end
-	end
+	-- Sheep pen by Lottie's cottage (north-east)
+	for x = 26, 35 do put(x, 0, 30, fence); put(x, 0, 39, fence) end
+	for z = 30, 39 do put(26, 0, z, fence); put(35, 0, z, fence) end
+	put(30, 0, 30, "air")
 end)
 
 -- Spawn a few sheep in the pen when the village is built (if Animalia is present).
@@ -199,7 +242,7 @@ function npcasso.build_village(player, origin)
 	core.after(3, function()
 		local o = npcasso.village()
 		if o and core.registered_entities["animalia:sheep"] then
-			for i = 1, 4 do core.add_entity(vector.offset(o, 19 + i, 0.5, 26), "animalia:sheep") end
+			for i = 1, 4 do core.add_entity(vector.offset(o, 28 + i, 0.5, 34), "animalia:sheep") end
 		end
 	end)
 end
@@ -373,7 +416,7 @@ core.register_on_player_receive_fields(function(player, formname, fields)
 		end
 		if fields.handin then handin(player, mine.npc) end
 		if fields.back then npcasso.open_talk(player, mine.npc) end
-		if fields.quit or fields.close then npcasso.on_talk_closed(name, mine.npc); npcasso.talk[name] = nil end
+		if fields.quit or fields.close then npcasso.on_talk_closed(name, mine.npc); npcasso.save_chat(name); npcasso.talk[name] = nil end
 		return true
 	elseif formname == "npcasso:journal" then
 		return true

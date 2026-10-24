@@ -112,3 +112,27 @@ core.register_globalstep(function(dtime)
 	end
 end)
 core.register_on_leaveplayer(function(p) clock_hud[p:get_player_name()] = nil end)
+
+-- Empty hand: move whatever you hold out of the hotbar into the first free backpack slot.
+function npcasso.empty_hand(player)
+	local inv, stack = player:get_inventory(), player:get_wielded_item()
+	if stack:is_empty() then return "Your hand is already empty." end
+	local list = inv:get_list("main")
+	for i = player:hud_get_hotbar_itemcount() + 1, #list do
+		if list[i]:is_empty() then
+			inv:set_stack("main", i, stack)
+			player:set_wielded_item(ItemStack(""))
+			return "Hand emptied."
+		end
+	end
+	return "No free space in your backpack."
+end
+
+if core.get_modpath("sfinv_buttons") then
+	sfinv_buttons.register_button("npcasso_empty_hand", {
+		title = "Empty hand",
+		tooltip = "Put away whatever you are holding",
+		image = "wieldhand.png",
+		action = function(player) npcasso.feed(player, npcasso.empty_hand(player), 0xBBBBBB) end,
+	})
+end
