@@ -65,6 +65,12 @@ class HandinIn(BaseModel):
         return v if isinstance(v, dict) else {}
 
 
+class FestivalIn(BaseModel):
+    world: str
+    player: str
+    game_time: float
+
+
 class GossipIn(BaseModel):
     world: str
     player: str
@@ -147,6 +153,16 @@ def create_app(db_path: str, llm) -> FastAPI:
     def react(r: ReactIn):
         out = run(game.react, llm, r.world, r.player, r.event_id, r.npc_ids)
         log.info("react %s -> %s", r.event_id, out)
+        return out
+
+    @app.get("/festival")
+    def festival_status(world: str, player: str):
+        return run(lambda c: game.festival_status(c, f"{world}:{player}"))
+
+    @app.post("/festival")
+    def festival(f: FestivalIn):
+        out = run(game.hold_festival, llm, f.world, f.player, f.game_time)
+        log.info("festival -> %s", out["ending"])
         return out
 
     @app.post("/gossip")

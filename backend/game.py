@@ -346,6 +346,71 @@ def tick(conn, llm, world, player, game_time) -> dict:
     return out
 
 
+# Harvest Festival ---------------------------------------------------------------------------------
+
+FESTIVAL_LEVEL = 4
+FESTIVAL_HOST = "bram"
+VOTE_TEMPLATE = {"for": "I vote for.", "abstain": "I abstain.", "against": "I vote against."}
+
+
+def vote(trust: int) -> str:
+    return "for" if trust >= 30 else "against" if trust < -10 else "abstain"
+
+
+def ending(votes: list[str]) -> str:
+    f, a = votes.count("for"), votes.count("against")
+    if f * 3 >= 2 * len(votes) and a == 0:
+        return "hero"
+    return "accepted" if f > a else "turned_away"
+
+
+def festival_status(conn, player) -> dict:
+    done = {r["quest_id"] for r in conn.execute(
+        "select quest_id from promises where player=? and status='done' and quest_id is not null", (player,))}
+    missing = [q["title"] for c in CONFIG["npcs"].values() for q in c.get("quests", []) if q["main"] and q["id"] not in done]
+    level = progress.player_state(conn, player)["level"]
+    held = conn.execute("select 1 from events where player=? and type='festival'", (player,)).fetchone() is not None
+    return {"eligible": not missing and level >= FESTIVAL_LEVEL and not held, "held": held, "missing_main": missing,
+            "level": level, "level_needed": FESTIVAL_LEVEL}
+
+
+def hold_festival(conn, llm, world, player, game_time) -> dict:
+    """The village votes on the player. Votes come from hidden trust; only a few villagers speak through the LLM."""
+    player = f"{world}:{player}"
+    if not festival_status(conn, player)["eligible"]:
+        raise ValueError("the festival can't be held yet")
+    trust = {n: db.get_trust(conn, n, player) for n in CONFIG["npcs"]}
+    votes = {n: vote(t) for n, t in trust.items()}
+    by_trust = sorted(trust, key=lambda n: trust[n])
+    strongest_for = [n for n in reversed(by_trust) if votes[n] == "for"][:2]
+    strongest_against = [n for n in by_trust if votes[n] == "against"][:2]
+    speakers = {FESTIVAL_HOST, *strongest_for, *strongest_against}
+    result = []
+    for n in CONFIG["npcs"]:
+        speech = VOTE_TEMPLATE[votes[n]]
+        if n in speakers:
+            situation = (f"the village festival vote; you vote {votes[n]}; explain why in one or two sentences, "
+                         "citing what you remember")
+            ctx = build_context(conn, n, player, None, {"situation": situation})
+            thread = f"{player}:festival:{n}"
+            res = llm.complete("npc_dialogue", ctx, thread)
+            vres = validate("npc_dialogue", res.data, ctx)
+            log_call(conn, "npc_dialogue", n, player, thread, ctx, res, vres)
+            if vres["ok"]:
+                speech = res.data["reply"]
+        result.append({"npc_id": n, "name": name(n), "vote": votes[n], "speech": speech})
+    end = ending(list(votes.values()))
+    eid = db.add_event(conn, {"player": player, "actor": player, "target": None, "type": "festival",
+                              "details": {"ending": end, "votes": votes}, "witnesses": list(CONFIG["npcs"]),
+                              "game_time": game_time, "source": "game", "verified": True, "confidence": None})
+    words = {"hero": "welcomed the newcomer as a hero", "accepted": "accepted the newcomer",
+             "turned_away": "turned the newcomer away"}[end]
+    for n in CONFIG["npcs"]:
+        db.add_memory(conn, n, player, eid, "festival", f"at the Harvest Festival the village {words}", "witnessed",
+                      1.0, 30, game_time)
+    return {"votes": result, "ending": end}
+
+
 NEUTRAL_LINE = "Hm. Let me think on that."
 MIN_CONFIDENCE = 0.6
 
