@@ -87,3 +87,28 @@ core.register_on_joinplayer(function(player)
 	local name = player:get_player_name()
 	core.after(2, npcasso.refresh_player, name)
 end)
+
+-- Clock (top-right): "Day 3  ·  14:20  (day)"
+local clock_hud, clock_t = {}, 0
+local function clock_text()
+	local t = core.get_timeofday() * 24
+	local h, m = math.floor(t), math.floor((t % 1) * 60)
+	local part = (h >= 6 and h < 18) and "day" or "night"
+	return ("Day %d  ·  %02d:%02d  (%s)"):format(core.get_day_count() + 1, h, m, part)
+end
+core.register_globalstep(function(dtime)
+	clock_t = clock_t + dtime
+	if clock_t < 2 then return end
+	clock_t = 0
+	local text = clock_text()
+	for _, p in ipairs(core.get_connected_players()) do
+		local name = p:get_player_name()
+		if clock_hud[name] then
+			p:hud_change(clock_hud[name], "text", text)
+		else
+			clock_hud[name] = p:hud_add({type = "text", position = {x = 1, y = 0}, alignment = {x = -1, y = 1},
+				offset = {x = -12, y = 12}, text = text, number = 0xFFF3DC, style = 1})
+		end
+	end
+end)
+core.register_on_leaveplayer(function(p) clock_hud[p:get_player_name()] = nil end)

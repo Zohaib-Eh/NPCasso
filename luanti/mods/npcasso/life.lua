@@ -1,11 +1,11 @@
 -- Village life: roaming, motives (moods), face-to-face gossip, auto-talk, monsters, harvests.
 -- Moods come from the backend and only drive behaviour; the player never sees them.
 
-local WALK_SPEED, FLEE_SPEED = 1.5, 2.4
+local WALK_SPEED, FLEE_SPEED = 1.1, 2.2
 local MEET_RANGE, PAIR_COOLDOWN, MEET_SECONDS = 3, 60, 7
 local EARSHOT, VOICED_GOSSIP_COOLDOWN = 16, 20   -- LLM-voiced gossip only when a player can hear it
 local AUTOTALK_RANGE, AUTOTALK_COS, AUTOTALK_HOLD, AUTOTALK_BLOCK = 2.5, 0.707, 1.0, 60
-local SAFE_RADIUS = 34
+local SAFE_RADIUS = 46
 
 npcasso.moods = {}
 local pair_cooldown, last_voiced = {}, 0
@@ -131,7 +131,7 @@ end
 local function arrive(self, pos)
 	halt(self)
 	self.dest, self.path = nil, nil
-	self.rest = math.random(5, 15)
+	self.rest = math.random(12, 35)
 	if vector.distance(pos, self.home) < 1.5 then self.object:set_yaw(self.post_yaw) end
 end
 
@@ -139,9 +139,12 @@ local function walk(self, dt, pos)
 	if not self.dest then
 		self.rest = (self.rest or 0) - dt
 		if self.rest > 0 then return end
-		if is_day() and not self.errand then
+		if is_day() and not self.errand and math.random() < 0.55 then
 			local places = village_places()
 			self.dest = #places > 0 and vector.round(places[math.random(#places)]) or self.home
+		elseif is_day() and vector.distance(pos, self.home) < 2 then
+			self.rest = math.random(15, 40)  -- happy where they are
+			return
 		elseif vector.distance(pos, self.home) > 2 then
 			self.dest = self.home
 		else
@@ -171,7 +174,7 @@ local function walk(self, dt, pos)
 	end
 	local v = vector.multiply(vector.normalize(flat), WALK_SPEED)
 	local vy = self.object:get_velocity().y
-	if d.y > 0.4 and math.abs(vy) < 0.1 then vy = 5.5 end  -- step up a block
+	if d.y > 1.0 and math.abs(vy) < 0.1 then vy = 5 end  -- a real one-block step up (waypoints sit 0.5 above feet)
 	self.object:set_velocity({x = v.x, y = vy, z = v.z})
 	self.object:set_yaw(math.atan2(-flat.x, flat.z))
 	set_walking(self, true)
@@ -301,5 +304,26 @@ end)
 core.register_on_dignode(function(pos, oldnode, digger)
 	if oldnode.name == "farming:wheat_8" and digger and digger:is_player() then
 		npcasso.event(digger, "harvest", nil, {item = oldnode.name}, {})
+	end
+end)
+
+-- Soft world border around the village: a short game, so no long treks. Players beyond WORLD_RADIUS are
+-- turned back. (An engine mapgen_limit is centred on 0,0; villages are built wherever the player first spawned.)
+local WORLD_RADIUS, border_t = 110, 0
+core.register_globalstep(function(dtime)
+	border_t = border_t + dtime
+	if border_t < 1 then return end
+	border_t = 0
+	local o = npcasso.village()
+	if not o then return end
+	for _, p in ipairs(core.get_connected_players()) do
+		local pos = p:get_pos()
+		local d = {x = pos.x - o.x, y = 0, z = pos.z - o.z}
+		local dist = vector.length(d)
+		if dist > WORLD_RADIUS then
+			local back = vector.add(o, vector.multiply(vector.normalize(d), WORLD_RADIUS - 3))
+			p:set_pos({x = back.x, y = pos.y + 1, z = back.z})
+			npcasso.feed(p, "The wilds beyond are too dangerous. Head back to the village.", 0xFF9E7A)
+		end
 	end
 end)

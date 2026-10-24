@@ -51,12 +51,46 @@ local function npc_name(id) return (npcasso.npcs[id] or {}).name or id end
 
 -- Notices and responses ----------------------------------------------------------------------------
 
-function npcasso.notice(player, text)
+local notice_queue = {}  -- player name -> {showing = bool, list = {...}}
+
+local function next_notice(player)
+	local name = player:get_player_name()
+	local q = notice_queue[name]
+	if not q or #q.list == 0 then
+		if q then q.showing = false end
+		return
+	end
+	q.showing = true
 	local id = player:hud_add({type = "text", position = {x = 0.5, y = 0.18}, alignment = {x = 0, y = 0},
-		text = text, number = 0xFFE7A8, scale = {x = 100, y = 100}, size = {x = 2}})
-	core.after(4, function()
-		if player:is_player() then player:hud_remove(id) end
+		text = table.remove(q.list, 1), number = 0xFFE7A8, scale = {x = 100, y = 100}, size = {x = 2}})
+	core.after(2.5, function()
+		if not player:is_player() then return end
+		player:hud_remove(id)
+		next_notice(player)
 	end)
+end
+
+function npcasso.notice(player, text)
+	local name = player:get_player_name()
+	notice_queue[name] = notice_queue[name] or {showing = false, list = {}}
+	local q = notice_queue[name]
+	for _, t in ipairs(q.list) do if t == text then return end end  -- already queued
+	table.insert(q.list, text)
+	if not q.showing then next_notice(player) end
+end
+
+-- "Elise will remember that." + "Mira will remember that." -> "Elise and Mira will remember that."
+local function merge_remembers(notices)
+	local names, rest = {}, {}
+	for _, n in ipairs(notices or {}) do
+		local who = n:match("^(.-) will remember that%.$")
+		if who then table.insert(names, who) else table.insert(rest, n) end
+	end
+	if #names > 0 then
+		local who = #names == 1 and names[1] or table.concat(names, ", ", 1, #names - 1) .. " and " .. names[#names]
+		table.insert(rest, 1, who .. " will remember that.")
+	end
+	return rest
 end
 
 -- Shows notices/shouts and hands out items from any backend response.
@@ -68,7 +102,7 @@ local function apply(name, out)
 		npcasso.feed(player, npc_name(s.npc_id) .. ": " .. s.text, 0xFFD27F)
 		core.chat_send_player(name, core.colorize("#FFD27F", "<" .. npc_name(s.npc_id) .. "> ") .. s.text)
 	end
-	for _, n in ipairs(out.notices or {}) do
+	for _, n in ipairs(merge_remembers(out.notices)) do
 		npcasso.feed(player, n, n:find("remember") and 0xFF9E7A or 0xFFE7A8)
 		if n:find("remember") then npcasso.notice(player, n) end  -- the signature moment stays centre-screen
 	end
@@ -724,7 +758,7 @@ end
 -- Village layout around origin o (o = first air node above ground, plaza centre):
 --   Elise's stall west (faces east), Rowan's forge east (faces west), Mira's inn north (door faces south),
 --   farm south-west, gravel cross paths, lamps, flowers. NPCs stand at their posts facing the plaza.
-npcasso.VILLAGE_RADIUS = 30
+npcasso.VILLAGE_RADIUS = 42
 npcasso.layout_extras = {}  -- functions(put, box, pick) adding buildings (town.lua)
 
 local function layout(o)
