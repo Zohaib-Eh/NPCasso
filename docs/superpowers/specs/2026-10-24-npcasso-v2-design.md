@@ -11,10 +11,21 @@ For Mubit: new NPCs reuse the same three tasks (`npc_react`, `intent_classify`, 
 ## Goals
 
 1. **Town hall** on the square (built by the village builder): a stone/wood hall with a **quest board** node inside. Right-click the board → a window listing every villager's open quests (who, what, reward, progress), Minecraft-UI style.
-2. **Three new NPCs** in `npcs.json`, each with role, persona, likes, trade, expertise, post in the village:
+2. **A real village: 12 villagers**, each with a small house built by the village builder around the square. New NPCs in `npcs.json`, each with role, persona, likes, trade (or none), expertise, `home` post, `chattiness` (0..1):
    - **Tobin — Farmer** (near the farm): wheat/bread/animal quests; trades bread for wheat.
    - **Wren — Guard** (town hall): monster quests; learns about every crime (any witnessed crime is told to Wren on the next tick, before other gossip).
-   - **Pip — Kid** (wanders the square): errands; spreads gossip (Pip gossips one extra memory per tick).
+   - **Pip — Kid**: errands; the village's fastest gossip (chattiness 1.0).
+   - **Bram — Elder** (town hall): hosts the Harvest Festival; values tradition and fairness.
+   - **Nell — Baker**: trades bread; warm, nosy (chattiness 0.8).
+   - **Corin — Fisher** (pond): quiet, superstitious (0.3).
+   - **Hazel — Herbalist**: gentle, knows plants and healing (0.5).
+   - **Dax — Miner**: rough, distrusts newcomers; trades coal (0.4).
+   - **Lottie — Shepherd**: cheerful, loves animals; wool quests (0.7).
+   Existing: Elise (0.5), Rowan (0.3), Mira (0.9), Tobin (0.5), Wren (0.6, hears crimes first).
+9. **Villagers roam and gossip face to face**
+   - **Roaming**: during the day each villager walks between village places (square, inn, farm, town hall, market, pond, other villagers' houses) using `core.find_path`, rests a few seconds at each, returns home at dusk and stays near home at night. Talking to the player, reacting to an event, or gossiping pauses roaming. If a path fails or takes too long they walk back home.
+   - **Gossip only on meetings**: when two roaming villagers come within 3 nodes (pair cooldown 60 s) they stop and face each other; the game asks the backend whether the first has news for the second (per online player). If so the teller's bubble shows the rumour ("Psst... the newcomer took apples from Elise's stall."), the listener's shows a reaction ("Really?!"), and the listener gains a `told_by:<teller>` memory. The teller shares with probability = their chattiness.
+   - Rules (backend): teller must have known the memory >= 0.1 game-day; reliability halves per retelling; trust effect scales with reliability; crimes are always shared with Wren.
 3. **Quests**
    - **Starter quests** per NPC defined in `npcs.json` (`quests`: id, title, kind `bring`|`slay`, item or mob, count, reward items, xp, trust). Each player can take each starter quest once. Examples: Tobin "Bring 10 wheat", Wren "Slay 3 monsters", Rowan "Bring 5 iron ingots", Elise "Find 3 apples", Mira "Bring 3 flowers", Pip "Bring 1 bread".
    - **LLM quests** offered in dialogue (existing `quest_offer`) become journal entries too (kind `bring`, xp default 20).
@@ -77,7 +88,9 @@ For Mubit: new NPCs reuse the same three tasks (`npc_react`, `intent_classify`, 
 
 - **LLM quest offers** go straight into the journal when offered (as today); talking to the NPC *is* accepting. The talk window's "Quests" button and the board list the NPC's starter quests, which need Accept.
 - **No deadlines on quests.** Starter, slay and LLM quests never expire or fail (no trust penalty for a forgotten quest). Only spoken *promises* keep deadlines and can be broken.
-- **Wren** learns of every witnessed crime (theft, vandalism, hit) immediately at event time, as a `told_by:<witness>` memory, outside the gossip slot. **Pip** adds one extra gossip step per tick (two memories spread per tick instead of one).
+- **Gossip spreads only when villagers meet** (goal 9); the periodic tick no longer spreads anything. *(User request: rumours spread like real life.)* The paragraph below is superseded.
+- ~~Realistic gossip (replaces v1's "one memory to everyone per tick")~~: rumours spread **one person at a time**. Each gossip step moves one memory from one NPC who knows it to one NPC who doesn't. A memory can only be retold once the teller has known it for ≥ 0.1 game-day (~2 real minutes at default day length). Reliability halves per retelling (witness 1.0 → told 0.5 → told-of-told 0.25 …) and the trust effect scales with reliability. Spreading the whole village takes many minutes, not one tick. *(User request: gossip was too fast.)*
+- **Wren** is the preferred listener for crimes (theft, vandalism, hit): when a crime memory is retold, Wren hears it before anyone else, but still through gossip timing, not instantly. **Pip** adds one extra gossip step per tick.
 - **Levels**: start at Lv 1 with 0 XP; reaching Lv n+1 needs `50 * n * (n+1) / 2` total XP → Lv 2 at 50, Lv 3 at 150, Lv 4 at 300. HUD shows progress within the current level (e.g. "Lv 2 · 40/100").
 - **Monsters**: Asuna ships no `mobs` mod (only Animalia/Creatura), so `mobs` + `mobs_monster` don't clash by name. Kills are detected by wrapping `on_death` of every registered `mobs_monster:*` entity after mods load, when the killer is a player. If the mods fail to load on Luanti 5.17 within a 30-minute timebox, fall back to counting kills of hostile Animalia mobs (wolf, grizzly bear) and drop night monsters.
 
