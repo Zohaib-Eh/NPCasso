@@ -46,6 +46,14 @@ class ReactIn(BaseModel):
         return v if isinstance(v, list) else []
 
 
+class GossipIn(BaseModel):
+    world: str
+    player: str
+    teller: str
+    listener: str
+    game_time: float
+
+
 class GreetIn(BaseModel):
     world: str
     player: str
@@ -121,6 +129,17 @@ def create_app(db_path: str, llm) -> FastAPI:
         out = run(game.react, llm, r.world, r.player, r.event_id, r.npc_ids)
         log.info("react %s -> %s", r.event_id, out)
         return out
+
+    @app.post("/gossip")
+    def gossip(g: GossipIn):
+        out = run(game.gossip, g.world, g.player, g.teller, g.listener, g.game_time)
+        if out["line"]:
+            log.info("gossip %s -> %s: %s", g.teller, g.listener, out["line"])
+        return out
+
+    @app.get("/moods")
+    def moods(world: str, player: str, game_time: float):
+        return run(game.moods, world, player, game_time)
 
     @app.post("/greet")
     def greet(g: GreetIn):

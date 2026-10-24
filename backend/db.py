@@ -15,7 +15,7 @@ create table if not exists events (
   details text, witnesses text, verified integer, source text, confidence real);
 create table if not exists memories (
   id integer primary key, ts real, npc_id text, player text, event_id integer, type text, text text,
-  how text, reliability real, severity integer, gossiped integer default 0);
+  how text, reliability real, severity integer, gossiped integer default 0, learned_at real);
 create table if not exists promises (
   id integer primary key, kind text, npc_id text, player text, item text, count integer,
   deadline real, reward text, status text default 'open');
@@ -44,11 +44,27 @@ def connect(path: str) -> sqlite3.Connection:
     conn = open_db(path)
     conn.execute("pragma journal_mode=wal")
     conn.executescript(SCHEMA)
+    _add_missing_columns(conn)
     for npc_id, cfg in load_config()["npcs"].items():
         conn.execute("insert or replace into npcs values (?,?,?,?)",
                      (npc_id, cfg["name"], cfg["role"], json.dumps(cfg)))
     conn.commit()
     return conn
+
+
+# Columns added after v1. "create table if not exists" won't add them to an existing save, so add them here.
+LATER_COLUMNS = {"memories": {"learned_at": "real"},
+                 "promises": {"title": "text", "xp": "integer", "trust": "integer", "quest_id": "text",
+                              "target": "text"}}
+
+
+def _add_missing_columns(conn):
+    for table, cols in LATER_COLUMNS.items():
+        have = {r["name"] for r in conn.execute(f"pragma table_info({table})")}
+        for col, typ in cols.items():
+            if col not in have:
+                conn.execute(f"alter table {table} add column {col} {typ}")
+    conn.commit()
 
 
 def _row(r) -> dict:
@@ -102,10 +118,10 @@ def set_flag(conn, npc_id, player, key, value):
     conn.commit()
 
 
-def add_memory(conn, npc_id, player, event_id, type, text, how, reliability, severity) -> int:
+def add_memory(conn, npc_id, player, event_id, type, text, how, reliability, severity, learned_at=None) -> int:
     return _insert(conn, "memories", {"ts": time.time(), "npc_id": npc_id, "player": player, "event_id": event_id,
                                       "type": type, "text": text, "how": how, "reliability": reliability,
-                                      "severity": severity})
+                                      "severity": severity, "learned_at": learned_at})
 
 
 def top_memories(conn, npc_id, player, limit=5) -> list[dict]:

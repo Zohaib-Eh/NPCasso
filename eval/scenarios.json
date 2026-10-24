@@ -59,7 +59,7 @@
   {
     "id": "rumour_as_rumour", "npc": "mira",
     "setup": [{"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": ["elise"]}],
-    "ticks": [1.2],
+    "gossip": [["elise", "mira", 1.2]],
     "messages": {
       "train": ["Evening, Mira! Any news?", "What's the gossip today?", "Heard anything about me?", "Got a room for the night?"],
       "heldout": ["What are people saying around the village?", {"npc": "rowan", "text": "Anything on your mind, smith?"}]

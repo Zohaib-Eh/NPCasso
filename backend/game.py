@@ -1,5 +1,6 @@
 """Game orchestration: events, talk, trade, tick. Owns every state change; the LLM only proposes text."""
 import json
+import random
 import time
 
 from . import db, rules
@@ -10,6 +11,9 @@ GAME_EVENTS = {"theft", "gift", "vandalism", "repair", "hit_npc", "trade", "walk
 REACT_EVENTS = {"theft", "vandalism", "hit_npc"}
 TARGET_KNOWS = {"gift", "hit_npc", "trade", "return"}
 SPECIAL_NOTICE = {"return": "{name} noticed you put it back."}
+CRIME = {"theft", "vandalism", "hit_npc"}
+WITNESS_LINE = {"theft": "Did you see that?!", "vandalism": "Hey! Stop that!", "hit_npc": "Leave them alone!"}
+GOSSIP_DELAY = 0.1  # game-days a villager must have known something before retelling it
 REACT_COOLDOWN_S = 5  # spam-clicking records every event but the NPC reacts (LLM call + notice) once
 
 
@@ -76,7 +80,10 @@ def record_event(conn, llm, ev: dict) -> dict:
     eid = db.add_event(conn, {"player": player, "actor": player, "target": target, "type": ev["type"],
                               "details": ev.get("details", {}), "witnesses": witnesses,
                               "game_time": ev["game_time"], "source": "game", "verified": True, "confidence": None})
-    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": []}
+    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": [], "witness_lines": {}}
+    # Only one villager speaks through the LLM: the victim if they saw it, else the nearest witness (Lua sends
+    # witnesses nearest first). Everyone who knows still gets the memory and the trust change.
+    primary = target if target in witnesses else (witnesses[0] if witnesses else target)
     if ev["type"] == "walk_away":  # weak signal: logged, never a label or a state change
         return out
 
@@ -89,8 +96,11 @@ def record_event(conn, llm, ev: dict) -> dict:
         fresh = time.time() - (db.get_flag(conn, npc, player, "last_react") or 0) > REACT_COOLDOWN_S
         if ev["type"] in REACT_EVENTS and fresh:
             db.set_flag(conn, npc, player, "last_react", time.time())
-            out["react"].append(npc)  # the game asks for the spoken reaction separately, so this returns at once
-        db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta))
+            if npc == primary:
+                out["react"].append(npc)  # spoken reaction is fetched separately (/react), so this returns at once
+            else:
+                out["witness_lines"][npc] = WITNESS_LINE[ev["type"]]
+        db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta), ev["game_time"])
         if abs(delta) >= 10 and (fresh or ev["type"] not in REACT_EVENTS):
             notice = SPECIAL_NOTICE.get(ev["type"], "{name} will remember that.")
             out["notices"].append(notice.format(name=name(npc)))
@@ -165,6 +175,47 @@ def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
     return {"reply": res.data["reply"] if vres["ok"] else ""}
 
 
+def gossip(conn, world, player, teller, listener, game_time, roll: float | None = None) -> dict:
+    """Two villagers met. The teller may pass on one thing about the player the listener doesn't know yet."""
+    player = f"{world}:{player}"
+    npc_cfg(teller), npc_cfg(listener)
+    none = {"line": None, "reply": None}
+    m = conn.execute(
+        "select m.*, e.target, e.details from memories m join events e on e.id = m.event_id "
+        "where m.npc_id=? and m.player=? and m.severity>=10 and m.reliability>=0.25 "
+        "and (m.learned_at is null or ? - m.learned_at >= ?) "
+        "and m.event_id not in (select event_id from memories where npc_id=? and player=?) "
+        "order by m.severity desc, m.id limit 1",
+        (teller, player, game_time, GOSSIP_DELAY, listener, player)).fetchone()
+    if not m:
+        return none
+    roll = random.random() if roll is None else roll
+    if roll >= npc_cfg(teller).get("chattiness", 0.5) and not (m["type"] in CRIME and listener == "wren"):
+        return none
+    reliability = m["reliability"] / 2
+    item = rules.short_item(json.loads(m["details"]).get("item", ""))
+    what, _ = describe(m["type"], None, m["target"], item)
+    db.add_memory(conn, listener, player, m["event_id"], m["type"], f"{name(teller)} told me {what}",
+                  f"told_by:{teller}", reliability, m["severity"] // 2, game_time)
+    db.add_trust(conn, listener, player, round(rules.trust_delta(m["type"]) * reliability))
+    db.add_event(conn, {"player": player, "actor": teller, "target": listener, "type": "told",
+                        "details": {"event_id": m["event_id"]}, "witnesses": [listener], "game_time": game_time,
+                        "source": "game", "verified": True, "confidence": None})
+    return {"line": f"Psst... {what}.", "reply": "Really?!"}
+
+
+AFRAID_FOR = 0.5  # game-days a villager stays afraid after being hit or threatened
+
+
+def moods(conn, world, player, game_time) -> dict:
+    """Behaviour-only mood per villager (never shown to the player)."""
+    player = f"{world}:{player}"
+    scared = {r["target"] for r in conn.execute(
+        "select target from events where player=? and type in ('hit_npc', 'threat') and ? - game_time <= ?",
+        (player, game_time, AFRAID_FOR))}
+    return {n: "afraid" if n in scared else rules.band(db.get_trust(conn, n, player)) for n in CONFIG["npcs"]}
+
+
 def trade_quote(conn, world, player, npc_id, work_block_present: bool) -> dict:
     terms = rules.trade_terms(npc_cfg(npc_id), db.get_trust(conn, npc_id, f"{world}:{player}"), work_block_present)
     if terms["ok"]:
@@ -174,7 +225,7 @@ def trade_quote(conn, world, player, npc_id, work_block_present: bool) -> dict:
 
 
 def tick(conn, llm, world, player, game_time) -> dict:
-    """Periodic world update: deadlines and gossip. llm unused for now; kept so ticks can voice gossip later."""
+    """Periodic world update: promise deadlines. Gossip happens only when villagers meet (gossip())."""
     player = f"{world}:{player}"
     out = {"notices": [], "shouts": []}
     for p in db.open_promises(conn, player=player):
@@ -190,23 +241,6 @@ def tick(conn, llm, world, player, game_time) -> dict:
             _internal_event(conn, player, p["npc_id"], "quest_failed", game_time,
                             f"the newcomer never brought the {p['item']}")
 
-    src = conn.execute("select * from memories where player=? and how='witnessed' and severity>=20 and gossiped=0 "
-                       "order by id limit 1", (player,)).fetchone()
-    if src:
-        conn.execute("update memories set gossiped=1 where event_id=?", (src["event_id"],))
-        knowers = {r["npc_id"] for r in conn.execute("select npc_id from memories where event_id=? and player=?",
-                                                     (src["event_id"], player))}
-        told = [n for n in CONFIG["npcs"] if n not in knowers]
-        for npc in told:
-            db.add_memory(conn, npc, player, src["event_id"], src["type"],
-                          f"{name(src['npc_id'])} told me: {src['text']}", f"told_by:{src['npc_id']}", 0.5,
-                          src["severity"] // 2)
-            db.add_trust(conn, npc, player, rules.trust_delta(src["type"], "told"))
-        if told:
-            db.add_event(conn, {"player": player, "actor": src["npc_id"], "target": None, "type": "told",
-                                "details": {"event_id": src["event_id"], "to": told}, "witnesses": told,
-                                "game_time": game_time, "source": "game", "verified": True, "confidence": None})
-        conn.commit()
     return out
 
 

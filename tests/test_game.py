@@ -163,29 +163,7 @@ def test_quest_offer_recorded(conn):
     assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["reward"]) == (2, 3.0, "bread")
 
 
-from backend.game import tick, trade_quote
-
-
-def test_gossip_spreads_once(conn):
-    record_event(conn, MockLLM(), ev("theft", witnesses=["elise"]))
-    tick(conn, MockLLM(), "w", "p", 1.2)
-    m = db.top_memories(conn, "mira", "w:p")[0]
-    assert m["how"] == "told_by:elise" and m["reliability"] == 0.5 and m["type"] == "theft"
-    assert db.get_trust(conn, "mira", "w:p") == -5
-    tick(conn, MockLLM(), "w", "p", 1.3)
-    assert len(db.top_memories(conn, "mira", "w:p")) == 1
-
-
-def test_gossip_skips_npc_who_already_knows(conn):
-    record_event(conn, MockLLM(), ev("theft", witnesses=["elise", "rowan"]))
-    tick(conn, MockLLM(), "w", "p", 1.2)
-    assert [m["how"] for m in db.top_memories(conn, "rowan", "w:p")] == ["witnessed"]
-
-
-def test_unwitnessed_never_gossiped(conn):
-    record_event(conn, MockLLM(), ev("theft"))
-    tick(conn, MockLLM(), "w", "p", 1.2)
-    assert db.top_memories(conn, "mira", "w:p") == []
+from backend.game import gossip, moods, tick, trade_quote
 
 
 def test_promise_kept_by_gifts(conn):
@@ -301,7 +279,7 @@ def test_rapid_events_react_once(conn):
 def test_record_event_makes_no_llm_call(conn):
     llm = ScriptedLLM([])
     r = record_event(conn, llm, ev("theft", witnesses=["elise", "mira"]))
-    assert llm.calls == [] and r["react"] == ["elise", "mira"] and r["notices"]
+    assert llm.calls == [] and r["react"] == ["elise"] and r["notices"]
 
 
 def test_returning_stolen_goods(conn):
@@ -317,3 +295,58 @@ def test_context_has_world_knowledge(conn):
     elise = build_context(conn, "elise", "w:p")["facts"]["world"]
     assert any("hoe" in k for k in elise) and any("iron" in k for k in rowan)
     assert any("Elise" in k for k in rowan)  # everyone knows who trades what
+
+
+# --- v2: face-to-face gossip, primary witness, moods ---
+
+def test_gossip_needs_meeting(conn):
+    fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    tick(conn, MockLLM(), "w", "p", 5.0)
+    assert db.top_memories(conn, "mira", "w:p") == []
+
+
+def test_gossip_delay_and_once(conn):
+    fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    assert gossip(conn, "w", "p", "elise", "mira", 1.05, roll=0)["line"] is None
+    g = gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0)
+    assert g["line"].startswith("Psst...") and "Elise's stall" in g["line"] and g["reply"]
+    m = db.top_memories(conn, "mira", "w:p")[0]
+    assert m["how"] == "told_by:elise" and m["reliability"] == 0.5
+    assert db.get_trust(conn, "mira", "w:p") == 10 - 15
+    assert gossip(conn, "w", "p", "elise", "mira", 1.3, roll=0)["line"] is None
+
+
+def test_gossip_reliability_halves(conn):
+    fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0)
+    assert gossip(conn, "w", "p", "mira", "rowan", 1.25, roll=0)["line"] is None  # mira only just heard
+    assert gossip(conn, "w", "p", "mira", "rowan", 1.35, roll=0)["line"]
+    assert db.top_memories(conn, "rowan", "w:p")[0]["reliability"] == 0.25
+
+
+def test_low_chattiness_still_tells_wren_crimes(conn):
+    fire(conn, MockLLM(), ev("theft", witnesses=["rowan"]))
+    assert gossip(conn, "w", "p", "rowan", "mira", 1.2, roll=0.9)["line"] is None
+    assert gossip(conn, "w", "p", "rowan", "wren", 1.2, roll=0.9)["line"]
+
+
+def test_gossip_noop(conn):
+    assert gossip(conn, "w", "p", "elise", "mira", 3.0, roll=0) == {"line": None, "reply": None}
+
+
+def test_only_primary_witness_reacts(conn):
+    r = record_event(conn, MockLLM(), ev("theft", witnesses=["mira", "elise"]))
+    assert r["react"] == ["elise"] and set(r["witness_lines"]) == {"mira"}
+    assert db.get_trust(conn, "mira", "w:p") < 10 and db.get_trust(conn, "elise", "w:p") < 10
+
+
+def test_nearest_witness_when_target_absent(conn):
+    r = record_event(conn, MockLLM(), ev("theft", witnesses=["mira", "rowan"]))
+    assert r["react"] == ["mira"] and set(r["witness_lines"]) == {"rowan"}
+
+
+def test_moods(conn):
+    record_event(conn, MockLLM(), ev("hit_npc", witnesses=["elise"]))
+    m = moods(conn, "w", "p", 1.2)
+    assert m["elise"] == "afraid" and m["mira"] == "neutral"
+    assert moods(conn, "w", "p", 2.0)["elise"] == "wary"

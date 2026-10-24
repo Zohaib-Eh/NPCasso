@@ -38,8 +38,8 @@ def run_one(llm, sc: dict, msg, split: str) -> dict:
             for ev in sc.get("setup", []):
                 r = game.record_event(conn, llm, {"world": world, "player": "p", "game_time": 1.0, **ev})
                 game.react(conn, llm, world, "p", r["event_id"], r["react"])
-            for t in sc.get("ticks", []):
-                game.tick(conn, llm, world, "p", t)
+            for teller, listener, t in sc.get("gossip", []):
+                game.gossip(conn, world, "p", teller, listener, t, roll=0)
             t0 = time.monotonic()
             out = game.talk(conn, llm, world, "p", npc, text, f"{world}:{npc}", 1.5)
             latency = int((time.monotonic() - t0) * 1000)
