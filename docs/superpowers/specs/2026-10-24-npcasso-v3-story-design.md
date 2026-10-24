@@ -115,7 +115,7 @@ There is no LLM in this step.
 | 1. The Names We Buried | Candor +, Bravery +, Loyalty + |
 | 2. The Last Place at the Table | Compassion +, Selflessness +, Loyalty + |
 | 3. The Peace You Made | Ambition +, Pragmatism +, Ingenuity + |
-| 4. The Last Departure (self-exile) | Independence +, Forgiveness +, Ambition − |
+| 4. The Road That Goes On (self-exile; the opposite of Chaos) | Independence +, Forgiveness +, Compassion +, Ambition − |
 | 5. The End of All Things (chaos) | Forgiveness −, Compassion −, Independence +, plus ≥ 2 rejected reconciliations (`chaos_marks`) |
 
 ### Convergence (the steer)
@@ -129,12 +129,24 @@ There is no LLM in this step.
 
 ## 7. Climaxes, endings and cutscenes
 
+The core idea and emotional impact of each ending, in the player's own words:
+
+| Ending | Core idea | Emotional impact |
+|---|---|---|
+| 1. The Names We Buried | Reveal the truth, even when justice comes at the cost of someone you love. | Truth can set the world free and still leave you alone. |
+| 2. The Last Place at the Table | Try to save everyone you love when there isn't enough to go around. | The people you save, and the person you couldn't, stay with you. |
+| 3. The Peace You Made | Build a lasting peace through compromises that may become injustices of their own. | You create a better world, but question what you sacrificed to get it. |
+| 4. The Road That Goes On | Help people build a future that no longer depends on you. | You discover that being needed isn't the same as being loved. |
+| 5. The End of All Things | Reject the world's endless cycle of suffering and destroy its possibility of a future. | You end suffering by ending everything that could give life meaning. |
+
+Every cutscene and epilogue must deliver its row's emotional impact.
+
 Each climax is a final, irreversible choice. The ending is committed only when the player makes it.
 
 1. **The Names We Buried:** reveal the consequential truth the player knows (from the flags) to the village, at the cost of the villager they're closest to. Choosing to stay silent instead commits the same ending in its darker variant: the truth stays buried.
 2. **The Last Place at the Table:** the final shared meal. There are fewer portions than chairs. The player chooses who goes without, possibly themselves. There is no option that feeds everyone.
 3. **The Peace You Made:** the player proposes the rationing order that ends the feud. It works, but it requires suppressing a truth or granting power to one person. The player chooses which.
-4. **The Last Departure:** a loved villager (highest trust) asks the player to stay, not out of need but because they want them there. The player chooses to leave or to stay.
+4. **The Road That Goes On:** the village can now run itself without the player. The game sets this from flags: villagers the player taught, mediated for or handed authority to. The opposite of Chaos: hope in a future, just without you. A loved villager (highest trust) asks the player to stay, not because they need them but because they want them there. The player learns that being needed isn't the same as being loved. They choose to leave or to stay.
 5. **The End of All Things:** the old mechanism beneath the bell tower (builder names it; distinct from the Palimpsest). The villager with the oldest real promise to the player asks if nothing was worth saving. The player activates it, or doesn't. The player activates it, or doesn't.
 
 **Refusing a climax** *(player's decision: give them the choice, then trigger the ending)*: every climax offers the destination's act and the option to refuse it. That final choice is what the player thinks, and it is final. The game records it as evidence and commits the ending at once, with no second climax:
