@@ -19,6 +19,8 @@ create table if not exists memories (
 create table if not exists promises (
   id integer primary key, kind text, npc_id text, player text, item text, count integer,
   deadline real, reward text, status text default 'open');
+create table if not exists players (
+  player text primary key, xp integer default 0, harvest_day integer default -1, harvest_count integer default 0);
 create table if not exists interactions (
   id integer primary key, ts real, task text, npc_id text, player text, thread_id text, request text,
   reply text, mubit_request_id text, latency_ms integer, tokens integer, validator_result text,

@@ -201,6 +201,8 @@ def test_trade_quote_itemstrings(conn):
     q = trade_quote(conn, "w", "p", "elise", True)
     assert q == {"ok": True, "give": {"item": "default:apple", "count": 3},
                  "cost": {"item": "default:steel_ingot", "count": 2}}
+    from backend import progress
+    progress.add_xp(conn, "w:p", 50, "test")  # Rowan only trades from Lv 2
     assert trade_quote(conn, "w", "p", "rowan", False) == {"ok": False, "reason": "no_work_block"}
 
 

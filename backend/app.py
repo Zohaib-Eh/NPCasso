@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from . import db, game, rules
+from . import db, game, progress, rules
 from .llm import make_llm
 
 log = logging.getLogger("npcasso")
@@ -163,6 +163,10 @@ def create_app(db_path: str, llm) -> FastAPI:
             return {"npc": game.npc_cfg(npc_id), "trust": trust, "band": rules.band(trust),
                     "memories": db.top_memories(c, npc_id, p, limit=20), "open_promises": db.open_promises(c, npc_id, p)}
         return run(state)
+
+    @app.get("/player")
+    def player(world: str, player: str):
+        return run(lambda c: progress.player_state(c, f"{world}:{player}"))
 
     @app.get("/interactions")
     def interactions(npc_id: str | None = None, limit: int = 50):

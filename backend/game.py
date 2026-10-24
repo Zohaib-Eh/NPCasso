@@ -3,11 +3,12 @@ import json
 import random
 import time
 
-from . import db, rules
+from . import db, progress, rules
 from .validator import validate
 
 CONFIG = db.load_config()
-GAME_EVENTS = {"theft", "gift", "vandalism", "repair", "hit_npc", "trade", "walk_away", "return"}
+GAME_EVENTS = {"theft", "gift", "vandalism", "repair", "hit_npc", "trade", "walk_away", "return", "slay", "harvest"}
+XP_FOR = {"trade": 2, "slay": 5, "promise_kept": 10}
 REACT_EVENTS = {"theft", "vandalism", "hit_npc"}
 TARGET_KNOWS = {"gift", "hit_npc", "trade", "return"}
 SPECIAL_NOTICE = {"return": "{name} noticed you put it back."}
@@ -39,6 +40,7 @@ def build_context(conn, npc_id, player, message=None, extra_facts=None) -> dict:
                   "open_promises": [strip(p) for p in promises if p["kind"] == "promise"],
                   "open_quests": [strip(p) for p in promises if p["kind"] == "quest"], **(extra_facts or {})},
         "items": list(CONFIG["items"]),
+        "player": {"title": progress.title(progress.player_state(conn, player)["level"])},
         "player_message": message,
     }
 
@@ -80,7 +82,15 @@ def record_event(conn, llm, ev: dict) -> dict:
     eid = db.add_event(conn, {"player": player, "actor": player, "target": target, "type": ev["type"],
                               "details": ev.get("details", {}), "witnesses": witnesses,
                               "game_time": ev["game_time"], "source": "game", "verified": True, "confidence": None})
-    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": [], "witness_lines": {}}
+    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": [], "witness_lines": {},
+           "xp_gained": 0, "level_up": None}
+    if ev["type"] == "harvest":
+        progress.merge(out, progress.harvest_xp(conn, player, ev["game_time"]))
+    if ev["type"] in XP_FOR:
+        progress.merge(out, progress.add_xp(conn, player, XP_FOR[ev["type"]], ev["type"]))
+    if ev["type"] in ("slay", "harvest"):  # progress only: no memories, no trust
+        _slay_progress(conn, player, ev, out)
+        return out
     # Only one villager speaks through the LLM: the victim if they saw it, else the nearest witness (Lua sends
     # witnesses nearest first). Everyone who knows still gets the memory and the trust change.
     primary = target if target in witnesses else (witnesses[0] if witnesses else target)
@@ -132,6 +142,10 @@ def react(conn, llm, world, player, event_id, npc_ids) -> dict:
     return out
 
 
+def _slay_progress(conn, player, ev, out):
+    """Filled in by the quest system (Task 4)."""
+
+
 def _internal_event(conn, player, npc_id, type, game_time, text, details=None) -> int:
     """A game-derived event (promise kept/broken, quest done/failed) the NPC always knows about."""
     eid = db.add_event(conn, {"player": player, "actor": player, "target": npc_id, "type": type,
@@ -154,6 +168,7 @@ def _gift_progress(conn, player, npc_id, item, game_time, out):
             db.update_promise(conn, p["id"], count=0, status="kept")
             _internal_event(conn, player, npc_id, "promise_kept", game_time, f"the newcomer kept their word about {item}")
             out["notices"].append(f"{name(npc_id)} noticed you kept your word.")
+            progress.merge(out, progress.add_xp(conn, player, XP_FOR["promise_kept"], "promise_kept"))
         else:
             db.update_promise(conn, p["id"], count=0, status="done")
             _internal_event(conn, player, npc_id, "quest_done", game_time, f"the newcomer brought the {item} I asked for")
@@ -217,6 +232,9 @@ def moods(conn, world, player, game_time) -> dict:
 
 
 def trade_quote(conn, world, player, npc_id, work_block_present: bool) -> dict:
+    min_level = (npc_cfg(npc_id).get("trade") or {}).get("min_level", 1)
+    if progress.player_state(conn, f"{world}:{player}")["level"] < min_level:
+        return {"ok": False, "reason": "level", "min_level": min_level}
     terms = rules.trade_terms(npc_cfg(npc_id), db.get_trust(conn, npc_id, f"{world}:{player}"), work_block_present)
     if terms["ok"]:
         for k in ("give", "cost"):
