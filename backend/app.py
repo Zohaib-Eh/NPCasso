@@ -77,6 +77,13 @@ class GossipIn(BaseModel):
     teller: str
     listener: str
     game_time: float
+    audible: bool = False  # a player is close enough to hear: voice it through the LLM
+
+
+class SpeechIn(BaseModel):
+    world: str
+    player: str
+    npc_id: str
 
 
 class GreetIn(BaseModel):
@@ -165,10 +172,14 @@ def create_app(db_path: str, llm) -> FastAPI:
         log.info("festival -> %s", out["ending"])
         return out
 
+    @app.post("/festival/speech")
+    def festival_speech(s: SpeechIn):
+        return run(game.festival_speech, llm, s.world, s.player, s.npc_id)
+
     @app.post("/gossip")
     def gossip(g: GossipIn):
-        out = run(game.gossip, g.world, g.player, g.teller, g.listener, g.game_time)
-        if out["line"]:
+        out = run(game.gossip, g.world, g.player, g.teller, g.listener, g.game_time, None, llm, g.audible)
+        if out["shared"]:
             log.info("gossip %s -> %s: %s", g.teller, g.listener, out["line"])
         return out
 

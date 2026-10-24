@@ -29,23 +29,25 @@ def test_festival_once_and_gated(conn):
         game.hold_festival(conn, ScriptedLLM([]), "w", "p", 5.0)
     make_eligible(conn)
     assert game.festival_status(conn, "w:p")["eligible"]
-    game.hold_festival(conn, ScriptedLLM([None] * 12), "w", "p", 5.0)
+    game.hold_festival(conn, ScriptedLLM([]), "w", "p", 5.0)
     assert game.festival_status(conn, "w:p")["held"]
     with pytest.raises(ValueError):
-        game.hold_festival(conn, ScriptedLLM([None] * 12), "w", "p", 5.1)
+        game.hold_festival(conn, ScriptedLLM([]), "w", "p", 5.1)
 
 
-def test_festival_llm_calls_bounded_and_fallback(conn):
+def test_festival_vote_then_speeches_on_demand(conn):
     make_eligible(conn)
     for npc in ("elise", "mira", "tobin"):
         db.add_trust(conn, npc, "w:p", 40)
     for npc in ("rowan", "dax"):
         db.add_trust(conn, npc, "w:p", -40)
-    llm = ScriptedLLM([None] * 12)
+    llm = ScriptedLLM([{"reply": "You kept faith with me. I vote for you.", "claims": []}, None])
     r = game.hold_festival(conn, llm, "w", "p", 5.0)
-    assert len(llm.calls) <= 6 and len(r["votes"]) == 12
+    assert llm.calls == [] and len(r["votes"]) == 12 and r["ending"] == "accepted"
     v = {x["npc_id"]: x for x in r["votes"]}
-    assert v["elise"]["vote"] == "for" and v["rowan"]["vote"] == "against" and v["pip"]["speech"] == "I abstain."
-    assert r["ending"] == "accepted"
+    assert v["elise"]["vote"] == "for" and v["rowan"]["vote"] == "against"
+    assert game.festival_speech(conn, llm, "w", "p", "elise") == {"speech": "You kept faith with me. I vote for you."}
+    assert game.festival_speech(conn, llm, "w", "p", "pip") == {"speech": "I abstain."}  # LLM failed: fallback
+    assert "you vote for" in llm.calls[0][1]["facts"]["situation"]
     assert any(m["text"] == "at the Harvest Festival the village accepted the newcomer"
                for m in db.top_memories(conn, "pip", "w:p", limit=20))

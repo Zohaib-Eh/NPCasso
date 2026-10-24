@@ -13,7 +13,7 @@ REACT_EVENTS = {"theft", "vandalism", "hit_npc"}
 TARGET_KNOWS = {"gift", "hit_npc", "trade", "return"}
 SPECIAL_NOTICE = {"return": "{name} noticed you put it back."}
 CRIME = {"theft", "vandalism", "hit_npc"}
-WITNESS_LINE = {"theft": "Did you see that?!", "vandalism": "Hey! Stop that!", "hit_npc": "Leave them alone!"}
+MAX_SPEAKERS = 2  # villagers who voice a reaction through the LLM; others just turn and look
 GOSSIP_DELAY = 0.1  # game-days a villager must have known something before retelling it
 REACT_COOLDOWN_S = 5  # spam-clicking records every event but the NPC reacts (LLM call + notice) once
 
@@ -82,8 +82,7 @@ def record_event(conn, llm, ev: dict) -> dict:
     eid = db.add_event(conn, {"player": player, "actor": player, "target": target, "type": ev["type"],
                               "details": ev.get("details", {}), "witnesses": witnesses,
                               "game_time": ev["game_time"], "source": "game", "verified": True, "confidence": None})
-    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": [], "witness_lines": {},
-           "xp_gained": 0, "level_up": None}
+    out = {"event_id": eid, "notices": [], "shouts": [], "give": [], "react": [], "xp_gained": 0, "level_up": None}
     if ev["type"] == "harvest":
         progress.merge(out, progress.harvest_xp(conn, player, ev["game_time"]))
     if ev["type"] in XP_FOR:
@@ -91,9 +90,10 @@ def record_event(conn, llm, ev: dict) -> dict:
     if ev["type"] in ("slay", "harvest"):  # progress only: no memories, no trust
         _slay_progress(conn, player, ev, out)
         return out
-    # Only one villager speaks through the LLM: the victim if they saw it, else the nearest witness (Lua sends
-    # witnesses nearest first). Everyone who knows still gets the memory and the trust change.
-    primary = target if target in witnesses else (witnesses[0] if witnesses else target)
+    # The victim (if they saw it) and the nearest witnesses voice a reaction through the LLM, up to MAX_SPEAKERS
+    # (Lua sends witnesses nearest first). Everyone who knows still gets the memory and the trust change.
+    ordered = ([target] if target in witnesses else []) + [w for w in witnesses if w != target]
+    speakers = set(ordered[:MAX_SPEAKERS])
     if ev["type"] == "walk_away":  # weak signal: logged, never a label or a state change
         return out
 
@@ -106,14 +106,13 @@ def record_event(conn, llm, ev: dict) -> dict:
         fresh = time.time() - (db.get_flag(conn, npc, player, "last_react") or 0) > REACT_COOLDOWN_S
         if ev["type"] in REACT_EVENTS and fresh:
             db.set_flag(conn, npc, player, "last_react", time.time())
-            if npc == primary:
-                out["react"].append(npc)  # spoken reaction is fetched separately (/react), so this returns at once
-            else:
-                out["witness_lines"][npc] = WITNESS_LINE[ev["type"]]
+            if npc in speakers:
+                out["react"].append(npc)  # spoken reactions are fetched separately (/react), so this returns at once
         db.add_memory(conn, npc, player, eid, ev["type"], text, "witnessed", 1.0, abs(delta), ev["game_time"])
         if abs(delta) >= 10 and (fresh or ev["type"] not in REACT_EVENTS):
             notice = SPECIAL_NOTICE.get(ev["type"], "{name} will remember that.")
             out["notices"].append(notice.format(name=name(npc)))
+    out["react"].sort(key=ordered.index)  # victim first, then nearest
     if ev["type"] == "gift" and item and target:
         _gift_progress(conn, player, target, item, ev["game_time"], out)
     return out
@@ -279,11 +278,23 @@ def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
     return {"reply": res.data["reply"] if vres["ok"] else ""}
 
 
-def gossip(conn, world, player, teller, listener, game_time, roll: float | None = None) -> dict:
-    """Two villagers met. The teller may pass on one thing about the player the listener doesn't know yet."""
+def _voice(conn, llm, npc, player, situation, fallback) -> str:
+    """One LLM line from `npc` in the given situation (npc_dialogue task), or the fallback if it fails."""
+    ctx = build_context(conn, npc, player, None, {"situation": situation})
+    thread = f"{player}:{npc}:scene:{time.time():.0f}"
+    res = llm.complete("npc_dialogue", ctx, thread)
+    vres = validate("npc_dialogue", res.data, ctx)
+    log_call(conn, "npc_dialogue", npc, player, thread, ctx, res, vres)
+    return res.data["reply"] if vres["ok"] else fallback
+
+
+def gossip(conn, world, player, teller, listener, game_time, roll: float | None = None, llm=None,
+           voice: bool = False) -> dict:
+    """Two villagers met. The teller may pass on one thing about the player the listener doesn't know yet.
+    The rumour always spreads; it is voiced through the LLM only when a player can hear it (voice=True)."""
     player = f"{world}:{player}"
     npc_cfg(teller), npc_cfg(listener)
-    none = {"line": None, "reply": None}
+    none = {"shared": False, "line": None, "reply": None}
     m = conn.execute(
         "select m.*, e.target, e.details from memories m join events e on e.id = m.event_id "
         "where m.npc_id=? and m.player=? and m.severity>=10 and m.reliability>=0.25 "
@@ -305,7 +316,15 @@ def gossip(conn, world, player, teller, listener, game_time, roll: float | None 
     db.add_event(conn, {"player": player, "actor": teller, "target": listener, "type": "told",
                         "details": {"event_id": m["event_id"]}, "witnesses": [listener], "game_time": game_time,
                         "source": "game", "verified": True, "confidence": None})
-    return {"line": f"Psst... {what}.", "reply": "Really?!"}
+    if not (voice and llm):
+        return {"shared": True, "line": None, "reply": None}
+    line = _voice(conn, llm, teller, player,
+                  f"you meet {name(listener)} in the village and pass on a rumour about the newcomer: {what}. "
+                  "Say it to them in one sentence, as gossip, in your own voice", f"Psst... {what}.")
+    reply = _voice(conn, llm, listener, player,
+                   f'{name(teller)} just told you: "{line}". React to {name(teller)} in one short sentence',
+                   "Really?!")
+    return {"shared": True, "line": line, "reply": reply}
 
 
 AFRAID_FOR = 0.5  # game-days a villager stays afraid after being hit or threatened
@@ -381,24 +400,9 @@ def hold_festival(conn, llm, world, player, game_time) -> dict:
         raise ValueError("the festival can't be held yet")
     trust = {n: db.get_trust(conn, n, player) for n in CONFIG["npcs"]}
     votes = {n: vote(t) for n, t in trust.items()}
-    by_trust = sorted(trust, key=lambda n: trust[n])
-    strongest_for = [n for n in reversed(by_trust) if votes[n] == "for"][:2]
-    strongest_against = [n for n in by_trust if votes[n] == "against"][:2]
-    speakers = {FESTIVAL_HOST, *strongest_for, *strongest_against}
-    result = []
-    for n in CONFIG["npcs"]:
-        speech = VOTE_TEMPLATE[votes[n]]
-        if n in speakers:
-            situation = (f"the village festival vote; you vote {votes[n]}; explain why in one or two sentences, "
-                         "citing what you remember")
-            ctx = build_context(conn, n, player, None, {"situation": situation})
-            thread = f"{player}:festival:{n}"
-            res = llm.complete("npc_dialogue", ctx, thread)
-            vres = validate("npc_dialogue", res.data, ctx)
-            log_call(conn, "npc_dialogue", n, player, thread, ctx, res, vres)
-            if vres["ok"]:
-                speech = res.data["reply"]
-        result.append({"npc_id": n, "name": name(n), "vote": votes[n], "speech": speech})
+    # Votes and the ending are decided here, instantly. Speeches are generated one by one on demand
+    # (festival_speech), so the player reads one while the next is being written.
+    result = [{"npc_id": n, "name": name(n), "vote": votes[n]} for n in CONFIG["npcs"]]
     end = ending(list(votes.values()))
     eid = db.add_event(conn, {"player": player, "actor": player, "target": None, "type": "festival",
                               "details": {"ending": end, "votes": votes}, "witnesses": list(CONFIG["npcs"]),
@@ -409,6 +413,17 @@ def hold_festival(conn, llm, world, player, game_time) -> dict:
         db.add_memory(conn, n, player, eid, "festival", f"at the Harvest Festival the village {words}", "witnessed",
                       1.0, 30, game_time)
     return {"votes": result, "ending": end}
+
+
+def festival_speech(conn, llm, world, player, npc_id) -> dict:
+    player = f"{world}:{player}"
+    row = conn.execute("select details from events where player=? and type='festival'", (player,)).fetchone()
+    if not row:
+        raise ValueError("no festival held yet")
+    v = json.loads(row["details"])["votes"][npc_cfg(npc_id) and npc_id]
+    return {"speech": _voice(conn, llm, npc_id, player,
+                             f"the village festival vote; you vote {v}; explain why in one or two sentences, "
+                             "citing what you remember about the newcomer", VOTE_TEMPLATE[v])}
 
 
 NEUTRAL_LINE = "Hm. Let me think on that."

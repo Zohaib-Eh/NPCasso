@@ -282,7 +282,7 @@ def test_rapid_events_react_once(conn):
 def test_record_event_makes_no_llm_call(conn):
     llm = ScriptedLLM([])
     r = record_event(conn, llm, ev("theft", witnesses=["elise", "mira"]))
-    assert llm.calls == [] and r["react"] == ["elise"] and r["notices"]
+    assert llm.calls == [] and r["react"] == ["elise", "mira"] and r["notices"]
 
 
 def test_returning_stolen_goods(conn):
@@ -310,42 +310,58 @@ def test_gossip_needs_meeting(conn):
 
 def test_gossip_delay_and_once(conn):
     fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
-    assert gossip(conn, "w", "p", "elise", "mira", 1.05, roll=0)["line"] is None
+    assert not gossip(conn, "w", "p", "elise", "mira", 1.05, roll=0)["shared"]
     g = gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0)
-    assert g["line"].startswith("Psst...") and "Elise's stall" in g["line"] and g["reply"]
+    assert g == {"shared": True, "line": None, "reply": None}  # out of earshot: no LLM, no line
     m = db.top_memories(conn, "mira", "w:p")[0]
     assert m["how"] == "told_by:elise" and m["reliability"] == 0.5
     assert db.get_trust(conn, "mira", "w:p") == 10 - 15
-    assert gossip(conn, "w", "p", "elise", "mira", 1.3, roll=0)["line"] is None
+    assert not gossip(conn, "w", "p", "elise", "mira", 1.3, roll=0)["shared"]
+
+
+def test_audible_gossip_is_voiced_by_llm(conn):
+    fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    llm = ScriptedLLM([{"reply": "Mira, the newcomer pinched my apples!", "claims": []},
+                       {"reply": "No! The cheek of it.", "claims": []}])
+    g = gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0, llm=llm, voice=True)
+    assert g == {"shared": True, "line": "Mira, the newcomer pinched my apples!", "reply": "No! The cheek of it."}
+    assert [c[0] for c in llm.calls] == ["npc_dialogue", "npc_dialogue"]
+    assert "rumour" in llm.calls[0][1]["facts"]["situation"]
+
+
+def test_audible_gossip_falls_back_when_llm_fails(conn):
+    fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    g = gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0, llm=ScriptedLLM([None, None]), voice=True)
+    assert g["line"].startswith("Psst...") and g["reply"] == "Really?!"
 
 
 def test_gossip_reliability_halves(conn):
     fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
     gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0)
-    assert gossip(conn, "w", "p", "mira", "rowan", 1.25, roll=0)["line"] is None  # mira only just heard
-    assert gossip(conn, "w", "p", "mira", "rowan", 1.35, roll=0)["line"]
+    assert not gossip(conn, "w", "p", "mira", "rowan", 1.25, roll=0)["shared"]  # mira only just heard
+    assert gossip(conn, "w", "p", "mira", "rowan", 1.35, roll=0)["shared"]
     assert db.top_memories(conn, "rowan", "w:p")[0]["reliability"] == 0.25
 
 
 def test_low_chattiness_still_tells_wren_crimes(conn):
     fire(conn, MockLLM(), ev("theft", witnesses=["rowan"]))
-    assert gossip(conn, "w", "p", "rowan", "mira", 1.2, roll=0.9)["line"] is None
-    assert gossip(conn, "w", "p", "rowan", "wren", 1.2, roll=0.9)["line"]
+    assert not gossip(conn, "w", "p", "rowan", "mira", 1.2, roll=0.9)["shared"]
+    assert gossip(conn, "w", "p", "rowan", "wren", 1.2, roll=0.9)["shared"]
 
 
 def test_gossip_noop(conn):
-    assert gossip(conn, "w", "p", "elise", "mira", 3.0, roll=0) == {"line": None, "reply": None}
+    assert gossip(conn, "w", "p", "elise", "mira", 3.0, roll=0) == {"shared": False, "line": None, "reply": None}
 
 
-def test_only_primary_witness_reacts(conn):
-    r = record_event(conn, MockLLM(), ev("theft", witnesses=["mira", "elise"]))
-    assert r["react"] == ["elise"] and set(r["witness_lines"]) == {"mira"}
+def test_two_nearest_witnesses_speak(conn):
+    r = record_event(conn, MockLLM(), ev("theft", witnesses=["mira", "rowan", "elise"]))
+    assert r["react"] == ["elise", "mira"]  # victim first, then nearest; rowan only turns to look
     assert db.get_trust(conn, "mira", "w:p") < 10 and db.get_trust(conn, "elise", "w:p") < 10
 
 
 def test_nearest_witness_when_target_absent(conn):
-    r = record_event(conn, MockLLM(), ev("theft", witnesses=["mira", "rowan"]))
-    assert r["react"] == ["mira"] and set(r["witness_lines"]) == {"rowan"}
+    r = record_event(conn, MockLLM(), ev("theft", witnesses=["mira", "rowan", "tobin"]))
+    assert r["react"] == ["mira", "rowan"]
 
 
 def test_moods(conn):
