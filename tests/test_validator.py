@@ -70,6 +70,38 @@ def test_tone_flag():
 
 def test_bad_quest_dropped():
     r = v({"reply": "Bring me gems.", "claims": [], "quest_offer": {"item": "gems", "count": 1, "reward": "apple"}})
-    assert r["ok"] and r["drop_quest"]
-    assert not v({"reply": "Bring coal.", "claims": [],
-                  "quest_offer": {"item": "coal", "count": 2, "reward": "apple"}})["drop_quest"]
+    assert "wrong_task" in r["errors"] and r["drop_quest"]
+    coal = v({"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "apple"}})
+    assert "wrong_task" in coal["errors"]
+
+
+def test_a_different_chore_is_rejected():
+    ctx = {"memories": [], "items": ["apple", "coal", "bread"],
+           "facts": {"need": {"item": "apple", "what": "3 apple", "payment": "2 steel ingot"}, "stock": ["apple", "bread"]}}
+    assert "wrong_task" in validate("npc_dialogue", {"reply": "Bring me coal.", "claims": []}, ctx)["errors"]
+    assert "wrong_task" not in validate("npc_dialogue",
+                                        {"reply": "Three apples from the orchard would help.", "claims": []}, ctx)["errors"]
+
+
+def test_errand_cannot_promise_a_different_payment():
+    ctx = {"memories": [], "facts": {"ask": {"kind": "errand", "item": "apple", "reward": "2 steel ingot"},
+                                    "stock": ["apple", "bread"]}}
+    lied = {"reply": "Bring me three apples and I'll give you bread.", "claims": []}
+    assert "wrong_reward" in validate("npc_dialogue", lied, ctx)["errors"]
+    honest = {"reply": "Bring me three apples and I'll give you 2 steel ingots.", "claims": []}
+    assert "wrong_reward" not in validate("npc_dialogue", honest, ctx)["errors"]
+
+
+def test_an_honest_ask_in_natural_words_passes():
+    ctx = {"memories": [], "items": ["flower", "bread"],
+           "facts": {"need": {"item": "flower", "what": "3 roses", "payment": "3 bread"}, "stock": ["bread"]}}
+    ask = {"reply": "Could you bring me 3 roses from the meadow? I'll give you 3 bread for them.", "claims": []}
+    assert validate("npc_dialogue", ask, ctx)["errors"] == []
+
+
+def test_a_cheerful_reply_from_an_angry_villager_is_rejected():
+    ctx = {"memories": [], "facts": {"stance": {"mood": "angry", "strength": "strong", "cause": "you hit me"}}}
+    warm = {"reply": "Welcome, friend! Lovely to see you.", "claims": []}
+    assert "tone_mismatch" in validate("npc_dialogue", warm, ctx)["errors"]
+    cold = {"reply": "Get away from my stall.", "claims": []}
+    assert validate("npc_dialogue", cold, ctx)["errors"] == []

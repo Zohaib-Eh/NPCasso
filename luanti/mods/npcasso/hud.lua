@@ -144,7 +144,41 @@ function npcasso.empty_hand(player)
 			return "Hand emptied."
 		end
 	end
+	if inv:get_size("backpack") > 0 and inv:room_for_item("backpack", stack) then
+		inv:add_item("backpack", stack)
+		player:set_wielded_item(ItemStack(""))
+		return "Hand emptied."
+	end
 	return "No free space in your backpack."
+end
+
+-- Extra rows under the inventory, so a villager handing you something has somewhere to land.
+local BACKPACK = 24
+
+local function ensure_backpack(player)
+	local inv = player:get_inventory()
+	if inv:get_size("backpack") ~= BACKPACK then inv:set_size("backpack", BACKPACK) end
+end
+
+core.register_on_joinplayer(function(player)
+	core.after(0.5, function() if player:is_player() then ensure_backpack(player) end end)
+end)
+
+if core.get_modpath("sfinv") then
+	sfinv.override_page("sfinv:crafting", {
+		get = function(self, player, context)
+			return sfinv.make_formspec(player, context, [[
+				list[current_player;craft;1.75,0.5;3,3;]
+				list[current_player;craftpreview;5.75,1.5;1,1;]
+				image[4.75,1.5;1,1;sfinv_crafting_arrow.png]
+				listring[current_player;main]
+				listring[current_player;craft]
+				listring[current_player;main]
+				listring[current_player;backpack]
+			]], true, "size[8,13.2]") ..
+				"label[0,9.15;Backpack]list[current_player;backpack;0,9.5;8,3;]"
+		end,
+	})
 end
 
 if core.get_modpath("sfinv_buttons") then

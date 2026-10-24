@@ -9,6 +9,7 @@ end
 local BASE = core.settings:get("npcasso.backend_url") or "http://127.0.0.1:8000"
 core.log("action", "[npcasso] loaded, backend " .. BASE .. (http and "" or " (HTTP DISABLED)"))
 local WITNESS_RANGE, WITNESS_COS, WORK_RANGE, TICK_SECONDS = 10, 0.5, 8, 30
+local CRY_RANGE = 20  -- a cry for help carries this far; hearing is not seeing
 local ANVILS = {"cottages:anvil", "npcasso:anvil"}
 
 npcasso = {npcs = {}}          -- id -> {name, role, skin, work_block}, from GET /npcs
@@ -18,7 +19,7 @@ local talk = {}                -- player name -> {npc, thread, history = {}, sen
 
 local function fetch(method, path, body, cb, timeout)
 	if not http then return cb(nil) end
-	http.fetch({url = BASE .. path, method = method, timeout = timeout or 30,
+	http.fetch({url = BASE .. path, method = method, timeout = timeout or 24,
 		data = body and core.write_json(body) or nil,
 		extra_headers = body and {"Content-Type: application/json"} or nil},
 		function(res)
@@ -62,8 +63,9 @@ local function next_notice(player)
 		return
 	end
 	q.showing = true
-	local id = player:hud_add({type = "text", position = {x = 0.5, y = 0.22}, alignment = {x = 0, y = 0},
-		text = table.remove(q.list, 1), number = 0xFFE7A8, scale = {x = 100, y = 100}, size = {x = 2}})
+	local id = player:hud_add({type = "text", position = {x = 1, y = 0.5}, alignment = {x = -1, y = 0},
+		offset = {x = -28, y = 0}, text = table.remove(q.list, 1), number = 0xFFE7A8,
+		scale = {x = 100, y = 100}, size = {x = 2}})
 	core.after(2.5, function()
 		if not player:is_player() then return end
 		player:hud_remove(id)
@@ -105,7 +107,8 @@ local function apply(name, out)
 	end
 	for _, n in ipairs(merge_remembers(out.notices)) do
 		npcasso.feed(player, n, n:find("remember") and 0xFF9E7A or 0xFFE7A8)
-		if n:find("remember") then npcasso.notice(player, n) end  -- the signature moment stays centre-screen
+		if n:find("remember") then npcasso.notice(player, n) end  -- signature moment, middle-right
+		if n:find("^Quest complete") then npcasso.cue("done", name, 0.7) end
 	end
 	if (out.xp_gained or 0) > 0 then
 		npcasso.feed(player, "+" .. out.xp_gained .. " XP", 0x9AE07A)
@@ -116,15 +119,21 @@ local function apply(name, out)
 	if out.day then npcasso.story_clock[name] = {day = out.day, time = out.time} end
 	npcasso.cold = npcasso.cold or {}
 	npcasso.cold[name] = out.cold or 0
+	if out.winter then npcasso.set_winter(name, out.winter) end
 	if out.sustain == false and player:get_hp() > 0 then
 		player:set_hp(0, {type = "set_hp", custom_type = "npcasso:cold"})
 	end
 	dress_winter(out.phase)
 	if out.offer and npcasso.offer_ending then npcasso.offer_ending(name, out.offer_text) end
-	if out.event_id then npcasso.refresh_moods() end
+	if out.event_id then npcasso.refresh_moods(true) end
 	for _, g in ipairs(out.give or {}) do
-		local left = player:get_inventory():add_item("main", ItemStack(g.item .. " " .. g.count))
+		local stack = ItemStack(g.item .. " " .. g.count)
+		local left = player:get_inventory():add_item("main", stack)
+		if not left:is_empty() and player:get_inventory():get_size("backpack") > 0 then
+			left = player:get_inventory():add_item("backpack", left)
+		end
 		if not left:is_empty() then core.add_item(player:get_pos(), left) end
+		npcasso.feed(player, "Received " .. g.count .. " " .. stack:get_short_description(), 0x9AE07A)
 	end
 end
 
@@ -136,26 +145,28 @@ local function npc_entity(id)
 	end
 end
 
-function npcasso.event(player, type, target, details, witnesses)
+function npcasso.event(player, type, target, details, witnesses, heard)
 	local name = player:get_player_name()
+	if type == "hit_npc" and target then npcasso.scream(target, witnesses) end
 	-- Instant feedback: witnesses stop, turn to the player and show "!" while the backend thinks.
 	for _, id in ipairs(witnesses or {}) do
 		local e = npc_entity(id)
 		if e then
 			local d = vector.subtract(player:get_pos(), e.object:get_pos())
 			e.rest, e.meet_until = 5, os.time() + 4
-			stop(e)
+			npcasso.stop(e)
 			e.object:set_yaw(math.atan2(-d.x, d.z))
-			npcasso.bubble(id, "!", 4)
-			if (type == "theft" or type == "vandalism" or type == "hit_npc") and id ~= "wren" then
-				e.errand = "wren"  -- off to tell the guard
+			if not (type == "hit_npc" and id == target) then npcasso.bubble(id, "!", 4, true) end
+			if (type == "theft" or type == "vandalism") and id ~= "wren" then
+				e.errand = "wren"  -- off to tell the guard (a hit is played by the backend's scene instead)
 			end
 		end
 	end
 	npcasso.post("/event", {world = npcasso.world(), player = name, type = type, target = target,
-		details = details or {}, witnesses = witnesses or {}, game_time = npcasso.game_time()},
+		details = details or {}, witnesses = witnesses or {}, heard = heard or {}, game_time = npcasso.game_time()},
 		function(out)
 			apply(name, out)  -- notices and items now; the spoken reaction follows
+			if out and out.scene and player:is_player() then npcasso.play_scene(player, out.scene) end
 			if out and out.react and #out.react > 0 then
 				npcasso.post("/react", {world = npcasso.world(), player = name, event_id = out.event_id,
 					npc_ids = out.react}, function(r) apply(name, r) end)
@@ -180,6 +191,16 @@ local function find_npc(id, pos, radius)
 	end
 end
 
+-- Villagers within earshot who did not see it (witnesses are passed in `exclude`).
+function npcasso.ears(pos, exclude)
+	local skip, ids = {}, {}
+	for _, id in ipairs(exclude or {}) do skip[id] = true end
+	for _, e in ipairs(each_npc(pos, CRY_RANGE)) do
+		if not skip[e.npc_id] then table.insert(ids, e.npc_id) end
+	end
+	return ids
+end
+
 -- An NPC witnesses something if it is close, has line of sight, and faces roughly toward it.
 function npcasso.witnesses(pos)
 	local eye = vector.offset(pos, 0, 1.5, 0)
@@ -201,11 +222,15 @@ function npcasso.witnesses(pos)
 	return ids
 end
 
+-- Name tag colour follows how a villager feels about you, and only changes when they can see you.
+local TAG = {angry = "#FF6B5E", afraid = "#E8E0A0", hurt = "#9FB4D8", cold = "#A8A8A8",
+	guarded = "#FFC24A", warm = "#9AE07A", fond = "#7AE0A8"}
+
 local function set_look(self)
 	local info = npcasso.npcs[self.npc_id] or {}
 	self.object:set_properties({
 		nametag = (info.name or tostring(self.npc_id)) .. " · " .. (info.role or ""),
-		nametag_color = "#FFFFFF", nametag_bgcolor = "#00000060",
+		nametag_color = self.tag_color or "#FFFFFF", nametag_bgcolor = "#00000060",
 		textures = {info.skin or "character.png"},
 	})
 end
@@ -230,6 +255,10 @@ local function set_marker(self, on)
 	if on and not (self.marker and self.marker:get_pos()) then
 		local m = core.add_entity(self.object:get_pos(), "npcasso:marker")
 		if m then
+			if (self.chimed or 0) < os.time() - 20 then
+				self.chimed = os.time()
+				npcasso.cue("notice", self.object:get_pos(), 0.3)
+			end
 			m:set_attach(self.object, "", {x = 0, y = 25, z = 0})
 			self.marker = m
 		end
@@ -273,9 +302,10 @@ end
 
 function npcasso.speaking(npc_id) return bubble_token[npc_id] ~= nil end
 
-function npcasso.bubble(npc_id, text, secs)
+function npcasso.bubble(npc_id, text, secs, silent)
 	local token = {}
 	bubble_token[npc_id] = token
+	if not silent then npcasso.speak(npc_id, text) end
 	for _, e in pairs(core.luaentities) do
 		if e.name == "npcasso:npc" and e.npc_id == npc_id then
 			e.object:set_properties({nametag = wrap(text, 34, 4) .. "\n\n" .. npc_name(npc_id),
@@ -330,10 +360,20 @@ core.register_entity("npcasso:npc", {
 			end
 		end
 
+		for _, p in ipairs(core.get_connected_players()) do  -- tag colour: only when they can see you
+			if vector.distance(p:get_pos(), pos) < 12
+				and core.line_of_sight(vector.offset(pos, 0, 1.5, 0), vector.offset(p:get_pos(), 0, 1.5, 0)) then
+				local c = TAG[npcasso.mood_of(self.npc_id)] or "#FFFFFF"
+				if c ~= self.tag_color then
+					self.tag_color = c
+					if not npcasso.speaking(self.npc_id) then self.object:set_properties({nametag_color = c}) end
+				end
+			end
+		end
+
 		-- A player close by: show "!" on the nametag (right-click to talk). No LLM call until the window opens.
 		local near = false
-		local mood = npcasso.moods[self.npc_id]
-		if mood ~= "afraid" and mood ~= "hostile" then
+		if not npcasso.shunning(self.npc_id) then
 			for _, p in ipairs(core.get_connected_players()) do
 				if vector.distance(p:get_pos(), pos) < GREET_RANGE then near = true end
 			end
@@ -352,7 +392,7 @@ core.register_entity("npcasso:npc", {
 		if puncher and puncher:is_player() then
 			local w = npcasso.witnesses(puncher:get_pos())
 			table.insert(w, self.npc_id)
-			npcasso.event(puncher, "hit_npc", self.npc_id, {}, w)
+			npcasso.event(puncher, "hit_npc", self.npc_id, {}, w, npcasso.ears(self.object:get_pos(), w))
 		end
 		return true
 	end,
@@ -362,23 +402,49 @@ core.register_entity("npcasso:npc", {
 
 local function plain(s) return (tostring(s):gsub("[<>]", "")) end
 
+local CHAT_VIEW, CHAT_LINE, CHAT_GAP, CHAT_COLS = 7.4, 0.5, 0.16, 34
+
+local function chat_height(text)
+	local n = 0
+	for para in (text .. "\n"):gmatch("([^\n]*)\n") do
+		n = n + math.max(1, math.ceil(#para / CHAT_COLS))
+	end
+	return n * CHAT_LINE
+end
+
 local function show_talk(name)
 	local t = talk[name]
 	if not t then return end
 	local info = npcasso.npcs[t.npc] or {}
-	local log = {}
-	for i = math.max(1, #t.history - 11), #t.history do
+	local entries = {}
+	local function add_line(measure, body)
+		table.insert(entries, {h = chat_height(measure), body = body})
+	end
+	for i = 1, #t.history do
 		local h = t.history[i]
 		if h.who == "*" then
-			table.insert(log, "<i><style color=#A0A0A0>" .. plain(h.text) .. "</style></i>")
+			add_line(plain(h.text), "<i><style color=#A0A0A0>" .. plain(h.text) .. "</style></i>")
 		else
 			local color = h.who == "You" and "#9AD0FF" or "#FFD27F"
-			table.insert(log, "<b><style color=" .. color .. ">" .. plain(h.who) .. "</style></b>  " .. plain(h.text))
+			local shown = plain(h.who) .. "  " .. plain(h.text)
+			add_line(shown, "<b><style color=" .. color .. ">" .. plain(h.who) .. "</style></b>  " .. plain(h.text))
 		end
 	end
 	if t.busy then
-		table.insert(log, "<i><style color=#A0A0A0>" .. plain(npc_name(t.npc)) .. " is thinking...</style></i>")
+		local thinking = plain(npc_name(t.npc)) .. " is thinking..."
+		add_line(thinking, "<i><style color=#A0A0A0>" .. thinking .. "</style></i>")
 	end
+	local total = 0
+	for _, e in ipairs(entries) do total = total + e.h + CHAT_GAP end
+	if total > 0 then total = total - CHAT_GAP end
+	local y = total < CHAT_VIEW and (CHAT_VIEW - total) or 0
+	local inner = ""
+	for i, e in ipairs(entries) do
+		inner = inner .. string.format("hypertext[0.05,%.2f;8.85,%.2f;c%d;%s]", y, e.h, i,
+			core.formspec_escape("<global color=#EEEEEE size=16>" .. e.body))
+		y = y + e.h + CHAT_GAP
+	end
+	local maxscroll = math.max(0, math.floor(((y - CHAT_GAP) - CHAT_VIEW) * 10 + 0.5))
 	local fs = "formspec_version[6]size[15,10.6]" ..
 		"style_type[button,button_exit;bgcolor=#7a5a33;textcolor=#FFF3DC]" ..
 		"box[0.3,0.3;4.3,7.7;#00000044]" ..
@@ -387,8 +453,9 @@ local function show_talk(name)
 		"hypertext[0.3,8.15;4.3,1.4;title;" .. core.formspec_escape("<global halign=center><big><b>" ..
 		plain(info.name or t.npc) .. "</b></big>\n<style color=#BBBBBB>" .. plain(info.role or "") .. "</style>") .. "]" ..
 		"box[4.9,0.3;9.8,7.7;#00000066]" ..
-		"hypertext[5.1,0.45;9.5,7.4;log;" .. core.formspec_escape("<global valign=bottom color=#EEEEEE size=16>" ..
-		table.concat(log, "\n\n")) .. "]" ..
+		"scroll_container[5.05,0.45;9.15,7.4;clog;vertical;0.1]" .. inner .. "scroll_container_end[]" ..
+		"scrollbaroptions[min=0;max=" .. maxscroll .. ";smallstep=10;largestep=40]" ..
+		"scrollbar[14.22,0.45;0.32,7.4;vertical;clog;" .. maxscroll .. "]" ..
 		"field[4.9,8.25;7.5,0.9;msg;;]field_close_on_enter[msg;false]" ..
 		"button[12.6,8.25;2.1,0.9;send;Say]" ..
 		"button[4.9,9.4;2.0,0.9;trade;Trade]" ..
@@ -421,6 +488,7 @@ end
 
 function npcasso.open_talk(player, npc_id)
 	local name = player:get_player_name()
+	if talk[name] and talk[name].npc ~= npc_id then npcasso.save_chat(name) end
 	if not talk[name] or talk[name].npc ~= npc_id then
 		local history, thread, last = load_chat(name, npc_id)
 		talk[name] = {npc = npc_id, history = history, sent = 0, busy = false, last = last,
@@ -463,7 +531,12 @@ function npcasso.greet_in_window(player, npc_id)
 			game_time = npcasso.game_time()}, function(out)
 			if talk[name] ~= t then return end
 			t.busy = false
-			if out and out.reply ~= "" then say(name, npc_name(npc_id), out.reply) end
+			if out and out.reply ~= "" then
+				say(name, npc_name(npc_id), out.reply)
+				npcasso.speak(npc_id, out.reply)
+			end
+			if out then apply(name, out) end
+			if out and out.point_to then npcasso.point(name, npc_id, out.point_to) end
 			npcasso.save_chat(name)
 			if not t.trading then show_talk(name) end
 		end)
@@ -482,6 +555,7 @@ local function send(player, msg)
 		if talk[name] ~= t then return end
 		t.busy = false
 		say(name, npc_name(t.npc), out and out.reply or (npc_name(t.npc) .. " seems distracted."))
+		if out and out.reply then npcasso.speak(t.npc, out.reply) end
 		npcasso.save_chat(name)
 		apply(name, out)
 		if out and out.point_to then npcasso.point(name, t.npc, out.point_to) end
@@ -527,8 +601,9 @@ local function show_trade(name)
 			"tooltip[cost;" .. core.formspec_escape(q.cost.count .. " x " .. short(q.cost.item)) .. "]" ..
 			"tooltip[give_item;" .. core.formspec_escape(q.give.count .. " x " .. short(q.give.item)) .. "]"
 	else
-		fs = fs .. "label[0.8,2.2;" .. core.formspec_escape(q.reason == "no_work_block" and
-			"\"I can't work without my anvil.\"" or "\"Not today. Not for you.\"") .. "]"
+		local refusal = {no_work_block = "\"I can't work without my anvil.\"",
+			shunned = "\"Not now. Not after what you did.\""}
+		fs = fs .. "label[0.8,2.2;" .. core.formspec_escape(refusal[q.reason] or "\"Not today. Not for you.\"") .. "]"
 	end
 	fs = fs .. "hypertext[0.4,3.45;9.7,0.7;status;" .. core.formspec_escape(t.trade_status or "") .. "]" ..
 		"list[current_player;main;0.4,4.3;8,1;]" ..
@@ -547,7 +622,7 @@ end
 local function quote(player, cb)
 	local name, t = player:get_player_name(), talk[player:get_player_name()]
 	npcasso.post("/trade", {world = npcasso.world(), player = name, npc_id = t.npc,
-		work_block_present = work_block_present(player, t.npc)}, function(q)
+		work_block_present = work_block_present(player, t.npc), game_time = npcasso.game_time()}, function(q)
 		if talk[name] ~= t then return end
 		t.quote = q or {ok = false, reason = "distracted"}
 		cb(t)
@@ -593,18 +668,18 @@ core.register_on_player_receive_fields(function(player, formname, fields)
 	elseif fields.give then
 		give(player)
 	elseif fields.trade then
+		t.held = true  -- opening another window is not leaving the conversation
 		open_trade(player)
 	elseif fields.do_trade then
 		do_trade(player)
 	elseif fields.quests then
+		t.held = true
 		npcasso.show_npc_quests(player, t.npc)
 	elseif fields.back then
 		t.trading = false
 		show_talk(name)
 	elseif fields.quit or fields.close then
-		if t.sent <= 1 and formname == "npcasso:talk" then
-			npcasso.event(player, "walk_away", t.npc, {messages = t.sent}, {})
-		end
+		if t.held and not fields.close then t.held = false; return true end
 		npcasso.on_talk_closed(name, t.npc)
 		npcasso.save_chat(name)
 		talk[name] = nil
@@ -696,16 +771,22 @@ end)
 
 -- Periodic tick: promise deadlines and gossip -------------------------------------------------------
 
+local function tick_player(name)
+	npcasso.post("/tick", {world = npcasso.world(), player = name, game_time = npcasso.game_time()},
+		function(out) apply(name, out) end)
+end
+
 local tick_t = 0
 core.register_globalstep(function(dtime)
 	tick_t = tick_t + dtime
 	if tick_t < TICK_SECONDS then return end
 	tick_t = 0
-	for _, p in ipairs(core.get_connected_players()) do
-		local name = p:get_player_name()
-		npcasso.post("/tick", {world = npcasso.world(), player = name, game_time = npcasso.game_time()},
-			function(out) apply(name, out) end)
-	end
+	for _, p in ipairs(core.get_connected_players()) do tick_player(p:get_player_name()) end
+end)
+
+core.register_on_joinplayer(function(player)  -- the world's look is right from the first moment
+	local name = player:get_player_name()
+	core.after(3, function() if core.get_player_by_name(name) then tick_player(name) end end)
 end)
 
 local cold_acc = {}
@@ -808,7 +889,7 @@ local GUIDE = {
 		"Levels unlock trades (Rowan forges only for Lv 2+) and change how villagers address you.\n\n" ..
 		"<b>Monsters</b> roam outside the village at night. Wren the guard will thank you for thinning them out."},
 	{"Festival", "<big><b>The Harvest Festival</b></big>\n\n" ..
-		"Finish every villager's <b>main quest</b> (marked *) and reach <b>Lv 4</b>, then begin the festival at the quest board.\n\n" ..
+		"Finish every villager's <b>main quest</b> (marked *) and reach <b>Lv 3</b>, then begin the festival at the quest board.\n\n" ..
 		"Every villager votes on whether you belong here. Their vote is how they truly feel about you - " ..
 		"every theft, gift, promise and apology they remember, and every rumour they heard.\n\n" ..
 		"<b>Hero</b>, <b>Accepted</b> or <b>Turned away</b>. You only get one festival."},
@@ -841,14 +922,22 @@ core.register_craftitem("npcasso:guide", {
 })
 
 function npcasso.give_starter_kit(player)
-	local key = "kit_" .. player:get_player_name()
-	if store:get_string(key) ~= "" then return end
-	store:set_string(key, "1")
+	local name = player:get_player_name()
 	local inv = player:get_inventory()
-	for _, item in ipairs({"npcasso:guide", "farming:hoe_wood", "farming:seed_wheat 10", "default:steel_ingot 6",
-			"farming:bread 3", "default:torch 10"}) do
-		if core.registered_items[ItemStack(item):get_name()] then inv:add_item("main", item) end
+	-- Older starts handed out a hoe, seeds, iron, bread and torches. Take that pile back once.
+	if store:get_string("kit_" .. name) ~= "" and store:get_string("kit_light_" .. name) == "" then
+		store:set_string("kit_light_" .. name, "1")
+		for _, item in ipairs({"farming:hoe_wood", "farming:seed_wheat 10", "default:steel_ingot 6",
+				"farming:bread 3", "default:torch 10"}) do
+			inv:remove_item("main", item)
+			if inv:get_size("backpack") > 0 then inv:remove_item("backpack", item) end
+		end
+		npcasso.feed(player, "You set out with the guide. The extra supplies are gone.", 0xBBBBBB)
 	end
+	if store:get_string("kit_" .. name) ~= "" then return end
+	store:set_string("kit_" .. name, "1")
+	store:set_string("kit_light_" .. name, "1")
+	if core.registered_items["npcasso:guide"] then inv:add_item("main", "npcasso:guide") end
 end
 
 -- Starter village: built once per world where the player first stands --------------------------------
@@ -895,6 +984,23 @@ local function pick(...)
 		if core.registered_nodes[n] then return n end
 	end
 	return "air"
+end
+
+-- A cave mouth near the village reads as a black hole at the edge of a bright square, and the builder
+-- flattens the ground without touching the rock under it. Fill the cave out to the world border.
+local function fill_caves(o)
+	local R, stone = 108, pick("default:stone")
+	local n = 0
+	for x = -R, R do for z = -R, R do
+		for y = -1, -24, -1 do
+			local pos = vector.offset(o, x, y, z)
+			local node = core.get_node(pos)
+			if node.name ~= "air" and node.name ~= "ignore" then break end
+			core.set_node(pos, {name = stone})
+			n = n + 1
+		end
+	end end
+	return n
 end
 
 -- Village layout around origin o (o = first air node above ground, plaza centre):
@@ -956,6 +1062,8 @@ function npcasso.build_village(player, origin)
 	core.emerge_area(vector.offset(o, -R, -30, -R), vector.offset(o, R, 30, R), function(_, _, remaining)
 		if remaining > 0 then return end
 		for _, n in ipairs(layout(o)) do core.set_node(n.pos, n.node) end
+		local filled = fill_caves(o)
+		if filled > 0 then core.chat_send_player(name, "[npcasso] Filled " .. filled .. " cave blocks under the village.") end
 		if npcasso.after_layout then npcasso.after_layout(o) end
 		for _, e in pairs(core.luaentities) do  -- rebuilding: replace, don't duplicate, the villagers
 			if e.name == "npcasso:npc" then e.object:remove() end
@@ -1066,7 +1174,7 @@ end
 core.after(1, load_until_ready)
 
 core.register_chatcommand("npcasso", {
-	params = "hand | guide | journal | board | home | village | spawn <npc_id> | remove | debug | reload | unstuck",
+	params = "hand | guide | journal | board | stats | check | scene hit|theft|gossip | winter 0..1 | home | village | spawn <npc_id> | remove | debug | reload | unstuck",
 	description = "NPCasso tools",
 	privs = {server = true},
 	func = function(name, param)
@@ -1080,6 +1188,39 @@ core.register_chatcommand("npcasso", {
 		elseif cmd == "board" then
 			npcasso.show_board(name)
 			return true
+		elseif cmd == "stats" then
+			npcasso.show_radar(name)
+			return true
+		elseif cmd == "winter" then  -- preview the look: /npcasso winter 0 .. 1 (the next tick sets it back)
+			local w = tonumber(arg)
+			if not w then return false, "Usage: /npcasso winter 0..1" end
+			npcasso.set_winter(name, math.max(0, math.min(1, w)))
+			return true, "Easing the world to winter " .. w .. ". The next tick returns it to the story's own."
+		elseif cmd == "scene" then
+			local near = each_npc(player:get_pos(), 12)
+			if not near[1] then return false, "Stand within 12 nodes of a villager." end
+			if arg == "gossip" then
+				if not near[2] then return false, "Need two villagers close together." end
+				npcasso.meet(near[1], near[2])
+				return true, near[1].npc_id .. " and " .. near[2].npc_id .. " meet."
+			end
+			local victim, w = near[1], npcasso.witnesses(player:get_pos())
+			if arg == "hit" then
+				table.insert(w, victim.npc_id)
+				npcasso.event(player, "hit_npc", victim.npc_id, {}, w, npcasso.ears(victim.object:get_pos(), w))
+			elseif arg == "theft" then
+				npcasso.event(player, "theft", victim.npc_id, {item = "default:apple"}, w)
+			else
+				return false, "Usage: /npcasso scene hit | theft | gossip (these are real events)"
+			end
+			return true, "Played " .. arg .. " on " .. victim.npc_id .. " (a real event: use a spare world)."
+		elseif cmd == "check" then
+			local o = npcasso.village()
+			if not o then return false, "No village yet." end
+			local lines = {}
+			for site, status in pairs(npcasso.site_status(o)) do table.insert(lines, site .. ": " .. status) end
+			table.sort(lines)
+			return true, table.concat(lines, "   ")
 		elseif cmd == "guide" then
 			npcasso.show_guide(name)
 			return true
@@ -1093,6 +1234,11 @@ core.register_chatcommand("npcasso", {
 			store:set_string("village", "")
 			npcasso.build_village(player, o)
 			return true
+		elseif cmd == "fillcaves" then  -- seal the ground under the village without rebuilding it
+			local o = npcasso.village()
+			if not o then return false, "No village yet." end
+			local filled = fill_caves(o)
+			return true, "Filled " .. filled .. " cave blocks under the village."
 		elseif cmd == "unstuck" then
 			return true, unstick(player) and "Moved you to open ground." or "You're already standing free (or no ground above)."
 		elseif cmd == "spawn" then
@@ -1120,9 +1266,14 @@ core.register_chatcommand("npcasso", {
 						"textarea[0.4,0.4;13.2,10.2;;NPCasso debug (hidden from players);" ..
 						core.formspec_escape(table.concat(out, "\n")) .. "]")
 				end
-				npcasso.get(("/npc/%s?world=%s&player=%s"):format(ids[i], npcasso.world(), name), function(s)
+				npcasso.get(("/npc/%s?world=%s&player=%s&game_time=%.3f"):format(ids[i], npcasso.world(), name,
+					npcasso.game_time()), function(s)
 					if s then
 						table.insert(out, ("%s  trust %d (%s)"):format(s.npc.name, s.trust, s.band))
+						if s.stance then
+							table.insert(out, ("   feels: %s (%s), %s"):format(s.stance.mood, s.stance.strength,
+								s.stance.cause or "no cause"))
+						end
 						for _, m in ipairs(s.memories) do
 							table.insert(out, ("   - [%s] %s (%s)"):format(m.type, m.text, m.how))
 						end
@@ -1138,12 +1289,15 @@ core.register_chatcommand("npcasso", {
 			step(1)
 			return true
 		end
-		return false, "Usage: /npcasso " .. "guide | journal | board | home | village | spawn <npc_id> | remove | debug | reload | unstuck"
+		return false, "Usage: /npcasso " .. "guide | journal | board | stats | check | scene | home | village | spawn <npc_id> | remove | debug | reload | unstuck"
 	end,
 })
 
 local MODPATH = core.get_modpath("npcasso")
+dofile(MODPATH .. "/atmosphere.lua")
+dofile(MODPATH .. "/sfx.lua")
 dofile(MODPATH .. "/hud.lua")
 dofile(MODPATH .. "/life.lua")
 dofile(MODPATH .. "/town.lua")
 dofile(MODPATH .. "/finale.lua")
+dofile(MODPATH .. "/radar.lua")

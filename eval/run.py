@@ -44,12 +44,12 @@ def run_one(llm, sc: dict, msg, split: str) -> dict:
             out = game.talk(conn, llm, world, "p", npc, text, f"{world}:{npc}", 1.5)
             latency = int((time.monotonic() - t0) * 1000)
             dialogues = list(reversed(_last(conn, "npc_dialogue", npc)))  # oldest first
-            intent_row = _last(conn, "intent_classify", npc)[0]
+            intent_rows = _last(conn, "intent_classify", npc)  # empty when a plain message skipped the classifier
             shown = next((d for d in dialogues if d["validator_result"].get("ok")), None)
             claims = json.loads(shown["reply"]).get("claims", []) if shown else []
             flags = shown["validator_result"]["flags"] if shown else []
             try:
-                intent = json.loads(intent_row["reply"]).get("intent")
+                intent = json.loads(intent_rows[0]["reply"]).get("intent") if intent_rows else "chat"
             except (TypeError, ValueError):
                 intent = None
             n_promises = len(db.open_promises(conn, npc, f"{world}:p", kind="promise"))

@@ -1,7 +1,7 @@
 import pytest
 
 from backend.game import tick
-from backend.story import add_evidence, anchor, cold_rate, leading_ending, phase
+from backend.story import DIMENSIONS, add_evidence, anchor, cold_rate, leading_ending, phase, profile
 
 
 def test_score_names_the_buried_truth(conn):
@@ -36,11 +36,26 @@ def test_death_ends_the_run_without_an_ending(conn):
     assert out["phase"] == "ended" and out["sustain"] is True and "ending" not in out
 
 
+def test_the_winter_look_creeps_in_from_arrival_to_day_ten(conn):
+    from backend.story import report
+    anchor(conn, "p", 0)
+    seen = [report(conn, "p", t)["winter"] for t in (0, 2.25, 4.5, 9, 12)]
+    assert seen == [0.0, 0.25, 0.5, 1.0, 1.0]
+
+
 def test_open_fact_is_only_the_season(conn):
     from backend.story import story_facts
     anchor(conn, "p", 0)
     facts = story_facts(conn, "p", 0.2)
     assert facts == {"season": "ordinary days, before the cold is a problem"}
+
+
+def test_profile_averages_each_dimension_and_zeroes_the_unseen(conn):
+    add_evidence(conn, "p", "candor", 1, None, None)
+    add_evidence(conn, "p", "candor", 0.5, None, None)
+    by = {r["dimension"]: r for r in profile(conn, "p")}
+    assert list(by) == list(DIMENSIONS)
+    assert by["candor"]["value"] == 0.75 and by["bravery"]["value"] == 0
 
 
 def test_conduct_and_closing_lean(conn):

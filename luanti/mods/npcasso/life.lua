@@ -1,13 +1,16 @@
 -- Village life: roaming, motives (moods), face-to-face gossip, auto-talk, monsters, harvests.
 -- Moods come from the backend and only drive behaviour; the player never sees them.
 
-local WALK_SPEED, FLEE_SPEED = 1.1, 2.2
+local WALK_SPEED, FLEE_SPEED, RUN_SPEED = 1.1, 2.2, 2.4
+local RESCUE_SECONDS, WATCH_SECONDS = 8, 10   -- how long a rescuer runs before giving up, and how long they then watch
 local MEET_RANGE, PAIR_COOLDOWN, MEET_SECONDS = 3, 60, 7
 local EARSHOT, VOICED_GOSSIP_COOLDOWN = 16, 20   -- LLM-voiced gossip only when a player can hear it
 local AUTOTALK_RANGE, AUTOTALK_COS, AUTOTALK_HOLD, AUTOTALK_BLOCK = 2.5, 0.707, 1.0, 60
 local SAFE_RADIUS = 46
 
-npcasso.moods = {}
+npcasso.moods = {}  -- npc id -> {mood = "angry"|..., shun = bool}, from the backend's stance
+function npcasso.mood_of(id) return (npcasso.moods[id] or {}).mood or "neutral" end
+function npcasso.shunning(id) return (npcasso.moods[id] or {}).shun == true end
 local pair_cooldown, last_voiced = {}, 0
 
 local function now() return os.time() end
@@ -52,8 +55,8 @@ end
 -- Moods -------------------------------------------------------------------------------------------
 
 local moods_at = 0
-function npcasso.refresh_moods()
-	if now() - moods_at < 3 then return end
+function npcasso.refresh_moods(force)
+	if not force and now() - moods_at < 3 then return end
 	moods_at = now()
 	local p = core.get_connected_players()[1]
 	if not p then return end
@@ -89,9 +92,11 @@ end
 
 local function start_meeting(a, b)
 	local t = now() + MEET_SECONDS
-	a.meet_until, b.meet_until = t, t
-	halt(a); halt(b)
-	face(a, b.object:get_pos()); face(b, a.object:get_pos())
+	for _, x in ipairs({a, b}) do  -- a guard on her way to the player is not stopped for a chat
+		if not x.confront then x.meet_until = t; halt(x) end
+	end
+	if not a.confront then face(a, b.object:get_pos()) end
+	if not b.confront then face(b, a.object:get_pos()) end
 	for _, p in ipairs(core.get_connected_players()) do
 		local name = p:get_player_name()
 		local audible = vector.distance(p:get_pos(), a.object:get_pos()) < EARSHOT
@@ -108,9 +113,13 @@ local function start_meeting(a, b)
 	end
 end
 
+npcasso.meet = start_meeting  -- /npcasso scene gossip
+
 local function try_meet(self, pos)
 	for _, other in ipairs(npcasso.each_npc(pos, MEET_RANGE)) do
-		if other ~= self and other.npc_id and (other.meet_until or 0) <= now() and not other.fleeing then
+		if other ~= self and other.npc_id and (other.meet_until or 0) <= now() and not other.fleeing
+			and (not other.confront or (self.tell == other.npc_id and now() < (self.tell_until or 0))) then
+			-- only a tattler who has just reached her may stop the guard for a word
 			local key = self.npc_id < other.npc_id and self.npc_id .. "|" .. other.npc_id or other.npc_id .. "|" .. self.npc_id
 			if (pair_cooldown[key] or 0) <= now() then
 				pair_cooldown[key] = now() + PAIR_COOLDOWN
@@ -207,7 +216,7 @@ local function walk(self, dt, pos)
 		self.dest, self.path, self.walk_t = self.home, nil, 0
 		return
 	end
-	local v = vector.multiply(vector.normalize(flat), WALK_SPEED)
+	local v = vector.multiply(vector.normalize(flat), self.run and RUN_SPEED or WALK_SPEED)
 	local vy = self.object:get_velocity().y
 	if d.y > 1.0 and math.abs(vy) < 0.1 then vy = 5 end  -- a real one-block step up (waypoints sit 0.5 above feet)
 	self.object:set_velocity({x = v.x, y = vy, z = v.z})
@@ -228,27 +237,50 @@ function npcasso.life_step(self, dt, pos)
 	if (self.meet_until or 0) > now() then return halt(self) end
 	self.fleeing = false
 	local player, pdist = nearest_player(pos)
-	local mood = npcasso.moods[self.npc_id] or "neutral"
-	if player then
+	local mood = npcasso.mood_of(self.npc_id)
+	if player and not self.errand and not self.confront then
 		local ppos = player:get_pos()
 		local away = vector.subtract(pos, ppos)
+		local sore = mood == "angry" or mood == "hurt" or mood == "cold"
 		if mood == "afraid" and pdist < 8 then return flee(self, away, FLEE_SPEED) end
-		if mood == "hostile" and pdist < 4 then return flee(self, away, WALK_SPEED) end
-		if mood == "wary" and pdist < 6 then halt(self); self.dest = nil; return face(self, ppos) end
-		if mood == "friendly" and pdist < 14 and pdist > 3.5 and now() >= (self.next_visit or 0)
+		if mood == "afraid" and not self.dest and vector.distance(pos, self.home) > 2 then
+			self.dest, self.path, self.walk_t = self.home, nil, 0  -- cowers at home
+		end
+		if sore and pdist < 3 then return flee(self, away, WALK_SPEED) end  -- steps back
+		if (sore or mood == "guarded") and pdist < 6 then halt(self); self.dest = nil; return face(self, ppos) end
+		if (mood == "warm" or mood == "fond") and pdist < 14 and pdist > 3.5 and now() >= (self.next_visit or 0)
 			and not shop_box(self) then
 			self.next_visit = now() + 300
 			self.dest, self.path, self.walk_t = vector.round(ppos), {vector.round(ppos)}, 0
 			self.wp = 1
 		end
 	end
+	if (self.watch_until or 0) > now() then  -- stands and watches the player after running to help
+		local p = nearest_player(pos)
+		if p then halt(self); return face(self, p:get_pos()) end
+	end
+	if self.confront then  -- the guard walks up to the player, and asks. She does not touch them.
+		local p = core.get_player_by_name(self.confront)
+		if not p or now() > (self.confront_until or 0) or vector.distance(p:get_pos(), pos) <= 3 then
+			self.confront, self.run = nil, nil
+			self.watch_until = now() + WATCH_SECONDS
+			halt(self)
+		else
+			local wp = vector.round(p:get_pos())
+			self.dest, self.path, self.wp = wp, {wp}, 1
+		end
+	end
 	if self.errand and shop_box(self) then self.errand = nil end  -- traders don't leave their shop
+	if self.errand and now() > (self.errand_until or math.huge) then self.errand, self.run = nil, nil end
 	if self.errand then
 		local w = npcasso.npc_entity(self.errand)
 		if not w then
-			self.errand = nil
+			self.errand, self.run = nil, nil
 		elseif vector.distance(w.object:get_pos(), pos) < MEET_RANGE then
-			self.errand = nil  -- close enough; the meeting below passes the news on
+			self.tell, self.tell_until = self.errand, now() + 4
+			self.errand, self.run = nil, nil  -- close enough; the meeting below passes the news on
+			self.watch_until = now() + WATCH_SECONDS
+			halt(self)
 		else
 			local wp = vector.round(w.object:get_pos())
 			self.dest, self.path, self.wp = wp, {wp}, 1
@@ -257,9 +289,37 @@ function npcasso.life_step(self, dt, pos)
 	self.meet_check = (self.meet_check or 0) + dt
 	if self.meet_check >= 1 then
 		self.meet_check = 0
-		if try_meet(self, pos) then return end
+		if not self.confront and try_meet(self, pos) then return end
 	end
 	walk(self, dt, pos)
+end
+
+-- A hit becomes a scene. The backend decides who moves; this plays it. -----------------------------
+
+local function rush(id, target, secs)
+	local e = npcasso.npc_entity(id)
+	if not e or not npcasso.npc_entity(target) or id == target then return end
+	e.errand, e.errand_until, e.run, e.meet_until = target, now() + secs, true, 0
+	npcasso.stop(e)
+end
+
+local function flinch(e, from)
+	local away = vector.normalize(vector.subtract(e.object:get_pos(), from))
+	e.object:set_velocity({x = away.x * 2.5, y = 3, z = away.z * 2.5})
+	e.object:set_yaw(math.atan2(away.x, -away.z))  -- still turned toward the player, backing off
+	e.rest, e.meet_until = 6, 0
+end
+
+function npcasso.play_scene(player, scene)
+	local victim = scene.victim and npcasso.npc_entity(scene.victim)
+	if victim then flinch(victim, player:get_pos()) end
+	for _, id in ipairs(scene.rescuers or {}) do rush(id, scene.victim, RESCUE_SECONDS) end
+	for _, id in ipairs(scene.tattlers or {}) do rush(id, "wren", RESCUE_SECONDS + 4) end
+	if scene.guard then
+		local g = npcasso.npc_entity(scene.guard)
+		if g then g.confront, g.confront_until, g.run, g.meet_until = player:get_player_name(), now() + 20, true, 0 end
+	end
+	npcasso.refresh_moods(true)
 end
 
 -- Auto-talk: stop in front of a villager and face them for a moment -------------------------------
@@ -286,9 +346,8 @@ core.register_globalstep(function(dtime)
 			local look = p:get_look_dir()
 			for _, e in ipairs(npcasso.each_npc(p:get_pos(), AUTOTALK_RANGE)) do
 				local to = vector.normalize(vector.subtract(vector.offset(e.object:get_pos(), 0, 1.2, 0), eye))
-				local mood = npcasso.moods[e.npc_id]
 				local blocked = ((autotalk_block[name] or {})[e.npc_id] or 0) > now()
-				if vector.dot(look, to) > AUTOTALK_COS and not blocked and mood ~= "hostile" and mood ~= "afraid" then
+				if vector.dot(look, to) > AUTOTALK_COS and not blocked and not npcasso.shunning(e.npc_id) then
 					found = e.npc_id
 					break
 				end

@@ -74,4 +74,5 @@ def test_greet_after_handin_thanks_for_quest(conn):
     game.handin(conn, "w", "p", "elise", {"default:apple": 3}, 1.0)
     llm = ScriptedLLM([{"reply": "Thank you for the apples!", "claims": []}])
     game.greet(conn, llm, "w", "p", "elise", "g", 1.01)
-    assert "Find 3 apples for Elise" in llm.calls[0][1]["facts"]["situation"]
+    situation = llm.calls[0][1]["facts"]["situation"]
+    assert "apple" in situation and "Find 3 apples" not in situation

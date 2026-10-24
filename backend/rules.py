@@ -27,6 +27,19 @@ def gift_pref(npc_cfg: dict, item: str | None) -> str:
     return "neutral"
 
 
+def stock(npc_cfg: dict) -> list[str]:
+    """What this villager can actually hand over: what they sell and what they keep."""
+    items = []
+    trade = npc_cfg.get("trade") or {}
+    if trade.get("give"):
+        items.append(trade["give"])
+    for key in ("loves", "likes"):
+        for item in npc_cfg.get(key) or []:
+            if item not in items:
+                items.append(item)
+    return items
+
+
 def short_item(itemstring: str) -> str | None:
     return next((k for k, v in CONFIG["items"].items() if v == itemstring), None)
 

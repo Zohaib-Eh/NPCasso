@@ -18,7 +18,7 @@ def test_health(db_path):
 def test_event_and_npc(db_path):
     c = client(db_path)
     r = c.post("/event", json=EV)
-    assert r.status_code == 200 and r.json()["notices"] == ["Elise will remember that."]
+    assert r.status_code == 200 and r.json()["notices"] == ["Elise will remember that.", "Word will spread."]
     s = c.get("/npc/elise", params={"world": "w", "player": "p"}).json()
     assert s["band"] == "wary" and len(s["memories"]) == 1
     react = c.post("/react", json={"world": "w", "player": "p", "event_id": r.json()["event_id"],

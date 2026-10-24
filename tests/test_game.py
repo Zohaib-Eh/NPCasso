@@ -21,7 +21,7 @@ def ev(t, **kw):
 def test_witnessed_theft(conn):
     r = fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
     assert db.get_trust(conn, "elise", "w:p") == -20
-    assert r["notices"] == ["Elise will remember that."]
+    assert r["notices"] == ["Elise will remember that.", "Word will spread."]
     assert r["shouts"] == [{"npc_id": "elise", "text": "Hey! I saw that!"}]
     mem = db.top_memories(conn, "elise", "w:p")[0]
     assert mem["how"] == "witnessed" and mem["text"] == "the newcomer took apple from my stall without paying"
@@ -58,10 +58,10 @@ def test_react_invalid_output_uses_template(conn):
     assert r["shouts"] == [] and db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer took apple from my stall without paying"
 
 
-def test_walk_away_is_remembered(conn):
+def test_walk_away_is_not_remembered(conn):
     r = record_event(conn, MockLLM(), ev("walk_away", witnesses=["elise"]))
     assert r["notices"] == [] and db.get_trust(conn, "elise", "w:p") == 10
-    assert db.top_memories(conn, "elise", "w:p")[0]["text"] == "the newcomer walked away while I was still speaking"
+    assert db.top_memories(conn, "elise", "w:p") == []
 
 
 def test_unknown_type_raises(conn):
@@ -73,7 +73,7 @@ def test_unknown_type_raises(conn):
 
 import json
 
-from backend.game import NEUTRAL_LINE, talk
+from backend.game import talk
 
 Q = {"intent": "question", "confidence": 0.5, "promise": None, "claim": None}
 HARD = {"choice": {"options": ["help them", "refuse them"]}, "evidence": [{"dimension": "loyalty", "weight": 0.5}]}
@@ -113,7 +113,7 @@ def test_react_stores_the_score(conn):
              "evidence": [{"dimension": "justice", "weight": -1}]}
     out = react(conn, ScriptedLLM([shout]), "w", "p", eid, ["elise"])
     assert out["shouts"][0]["text"] == "Hey! I saw that!"
-    row = conn.execute("select dimension, weight from evidence where player='w:p'").fetchone()
+    row = conn.execute("select dimension, weight from evidence where player='w:p' and note='spoken'").fetchone()
     assert (row["dimension"], row["weight"]) == ("justice", -1.0)
 
 
@@ -127,12 +127,12 @@ def test_talk_recalls_theft(conn):
 def test_talk_retries_then_passes(conn):
     bad = {"reply": "Thanks for the bread!", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
     good = {"reply": "Hello.", "claims": [], **HARD}
-    llm = ScriptedLLM([Q, bad, good])
+    llm = ScriptedLLM([bad, good])
     r = talk(conn, llm, "w", "p", "elise", "hi", "th1", 1.0)
     assert r["reply"] == "Hello."
     rows = dialogue_rows(conn)
     assert len(rows) == 2 and rows[0]["retried"] and rows[0]["prev_id"] == rows[1]["id"]
-    assert "invented_event:99" in llm.calls[2][1]["validator_feedback"]
+    assert "invented_event:99" in llm.calls[1][1]["validator_feedback"]
 
 
 def test_talk_two_failures_neutral(conn):
@@ -191,12 +191,14 @@ def test_threat_lowers_trust(conn):
     assert db.get_trust(conn, "elise", "w:p") == -5
 
 
-def test_quest_offer_recorded(conn):
-    offer = {"reply": "Bring coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "bread"}, **HARD}
-    r = talk(conn, ScriptedLLM([Q, offer]), "w", "p", "elise", "any work?", "t", 1.0)
-    q = db.open_promises(conn, "elise", "w:p", kind="quest")[0]
-    assert r["quest_offer"]["item"] == "coal" and (q["count"], q["deadline"], q["xp"]) == (2, None, 20)
-    assert q["title"] == "2 coal for Elise" and q["reward"] == '["farming:bread"]'
+def test_a_made_up_chore_is_not_recorded(conn):
+    bad = {"reply": "Bring me coal.", "claims": [], "quest_offer": {"item": "coal", "count": 2, "reward": "bread"}, **HARD}
+    good = {"reply": "Three apples from the orchard would set the stall right.", "claims": [], **HARD}
+    llm = ScriptedLLM([bad, good])
+    r = talk(conn, llm, "w", "p", "elise", "any work?", "t", 1.0)
+    assert r["reply"].startswith("Three apples") and r["quest_offer"] is None
+    assert db.open_promises(conn, "elise", "w:p", kind="quest") == []
+    assert "wrong_task" in llm.calls[1][1]["validator_feedback"]
 
 
 from backend.game import gossip, moods, tick, trade_quote
@@ -258,9 +260,9 @@ def test_talk_survives_wrong_types_in_dialogue(conn):
     bad_claim = {"reply": "x", "claims": [{"event_id": [1], "type": "gift", "how": "witnessed"}]}
     bad_quest = {"reply": "Bring coal.", "claims": [], **HARD,
                  "quest_offer": {"item": "coal", "count": "two", "reward": "bread"}}
-    assert talk(conn, ScriptedLLM([Q, bad_claim, bad_claim]), "w", "p", "elise", "hi", "t", 1.0)["reply"].startswith("I could use your help")
-    r = talk(conn, ScriptedLLM([Q, bad_quest]), "w", "p", "elise", "hi", "t", 1.0)
-    assert r["reply"] == "Bring coal." and r["quest_offer"] is None
+    assert talk(conn, ScriptedLLM([Q, bad_claim, bad_claim]), "w", "p", "elise", "hi", "t", 1.0)["reply"] == "Sorry, say that once more."
+    r = talk(conn, ScriptedLLM([Q, bad_quest, bad_quest]), "w", "p", "elise", "hi", "t", 1.0)
+    assert r["reply"] == "Sorry, say that once more." and r["quest_offer"] is None
 
 
 def test_react_memory_wrong_type_uses_template(conn):
@@ -276,12 +278,12 @@ def test_false_corrections_cannot_farm_trust(conn):
 
 
 def test_no_retry_after_llm_error(conn):
-    llm = ScriptedLLM([Q, None, {"reply": "late", "claims": []}])
-    assert talk(conn, llm, "w", "p", "elise", "hi", "t", 1.0)["reply"].startswith("I could use your help")
+    llm = ScriptedLLM([None, {"reply": "late", "claims": []}])
+    assert talk(conn, llm, "w", "p", "elise", "hi", "t", 1.0)["reply"] == "Sorry, say that once more."
     assert len([c for c in llm.calls if c[0] == "npc_dialogue"]) == 1
 
 
-from backend.game import greet
+from backend.game import greet, journal
 
 
 def test_greet_uses_dialogue_task_without_player_message(conn):
@@ -291,12 +293,85 @@ def test_greet_uses_dialogue_task_without_player_message(conn):
     assert r["reply"] == "Oh. It's you. Give Mira the wood, or keep it."
     task, user = llm.calls[0]
     assert task == "npc_dialogue" and user["player_message"] is None
-    assert user["facts"]["situation"] == "the player walks up to you; speak first"
+    assert user["facts"]["situation"].startswith("a stranger has walked up")
+    assert user["facts"]["ask"] is None
+    assert user["facts"]["ease"] == "introduce"
+    assert not {"need", "strain", "sign", "bent"} & set(user["facts"])
+    assert user["npc"]["voice"] and user["npc"]["location"]
+    assert journal(conn, "w:p")["active"] == []
 
 
-def test_greet_invalid_returns_empty(conn):
+def test_each_villager_is_met_for_the_first_time_once(conn):
+    hello = {"reply": "Hello. I'm around.", "claims": []}
+    greet(conn, ScriptedLLM([hello]), "w", "p", "elise", "g0", 1.0)
+    fresh = ScriptedLLM([hello])
+    greet(conn, fresh, "w", "p", "nell", "g1", 1.0)  # a different villager is still a stranger
+    assert fresh.calls[0][1]["facts"].get("ease") == "introduce"
+    again = ScriptedLLM([hello])
+    greet(conn, again, "w", "p", "elise", "g2", 1.0)
+    assert again.calls[0][1]["facts"]["ease"] == "hint" and not again.calls[0][1]["facts"].get("need")
+
+
+def test_the_shortage_comes_with_acquaintance_and_not_at_every_hello(conn):
+    hello = {"reply": "Hello. I'm around.", "claims": []}
+    for i in range(2):
+        greet(conn, ScriptedLLM([hello]), "w", "p", "nell", f"g{i}", 1.0 + i * 0.1)
+    third = ScriptedLLM([hello])
+    greet(conn, third, "w", "p", "nell", "g3", 1.3)
+    facts = third.calls[0][1]["facts"]
+    assert facts["ease"] == "open" and facts["need"]["item"] == "flour" and isinstance(facts["sign"], str)
+    assert "strain" not in facts  # the shortage is shown through signs, never stated
+    again = ScriptedLLM([hello])
+    greet(conn, again, "w", "p", "nell", "g4", 1.4)
+    assert not again.calls[0][1]["facts"].get("need")
+
+
+def test_a_long_talk_drifts_from_small_talk_to_a_worry_to_the_ask(conn):
+    llm = ScriptedLLM([{"reply": "Mm, busy day.", "claims": []}] * 8)
+    for i in range(8):
+        talk(conn, llm, "w", "p", "elise", "How is the shop?", "t", 1.0)
+    seen = [call[1]["facts"] for call in llm.calls]
+    assert [bool(f.get("lean")) for f in seen] == [False, False, False, True, True, True, False, True]
+    assert seen[3]["lean"] == {"short_of": "apples"} and not seen[3].get("need")
+    assert seen[6]["need"]["item"] == "apple" and seen[7].get("need") is None  # asked once; not again at once
+
+
+def test_a_hit_villager_does_not_pitch_an_errand_or_start_over(conn):
+    hello = {"reply": "Hello. I'm around.", "claims": []}
+    for i in range(3):
+        greet(conn, ScriptedLLM([hello]), "w", "p", "nell", f"g{i}", 1.0 + i * 0.01)
+    record_event(conn, ScriptedLLM([]), ev("hit_npc", target="nell", witnesses=["nell"], game_time=1.1))
+    llm = ScriptedLLM([hello])
+    greet(conn, llm, "w", "p", "nell", "g9", 1.12)
+    sent = llm.calls[0][1]
+    assert sent["facts"]["stance"] == {"mood": "angry", "strength": "strong", "cause": "you hit me"}
+    assert not sent["facts"].get("need") and "ease" not in sent["facts"] and "sign" not in sent["facts"]
+    assert sent["memories"][0]["when"] == "moments ago"
+
+
+def test_an_insult_is_heard_and_asks_nothing_of_the_insulter(conn):
+    hello = {"reply": "Hello. I'm around.", "claims": []}
+    for i in range(4):
+        greet(conn, ScriptedLLM([hello]), "w", "p", "elise", f"g{i}", 1.0)
+    insult = {"intent": "insult", "confidence": 0.95, "promise": None, "claim": None}
+    llm = ScriptedLLM([insult, {"reply": "Mind your tongue.", "claims": []}])
+    talk(conn, llm, "w", "p", "elise", "help me, you fool", "t", 1.0)
+    facts = llm.calls[1][1]["facts"]
+    assert facts["heard_as"] == "insult" and not facts.get("need")
+
+
+def test_an_insult_leaves_a_memory_that_does_not_travel(conn):
+    from backend.game import gossip
+    insult = {"intent": "insult", "confidence": 0.95, "promise": None, "claim": None}
+    talk(conn, ScriptedLLM([insult, {"reply": "Mind your tongue.", "claims": []}]), "w", "p", "corin", "you fool",
+         "t", 1.0)
+    assert db.top_memories(conn, "corin", "w:p")[0]["text"] == "the newcomer insulted me"
+    assert not gossip(conn, "w", "p", "corin", "elise", 2.0, roll=0.0)["shared"]
+
+
+def test_a_failed_greeting_is_never_silent(conn):
     bad = {"reply": "x", "claims": [{"event_id": 5, "type": "gift", "how": "witnessed"}]}
-    assert greet(conn, ScriptedLLM([bad, bad]), "w", "p", "elise", "g", 1.0)["reply"] == ""
+    assert greet(conn, ScriptedLLM([bad, bad]), "w", "p", "elise", "g", 1.0)["reply"]
 
 
 def test_react_memory_is_authoritative_and_event_described(conn):
@@ -346,7 +421,7 @@ def test_gossip_needs_meeting(conn):
 
 
 def test_gossip_delay_and_once(conn):
-    fire(conn, MockLLM(), ev("theft", witnesses=["elise"]))
+    fire(conn, MockLLM(), ev("theft", target="tobin", witnesses=["elise"]))
     assert not gossip(conn, "w", "p", "elise", "mira", 1.05, roll=0)["shared"]
     g = gossip(conn, "w", "p", "elise", "mira", 1.2, roll=0)
     assert g == {"shared": True, "line": None, "reply": None}  # out of earshot: no LLM, no line
@@ -386,6 +461,14 @@ def test_low_chattiness_still_tells_wren_crimes(conn):
     assert gossip(conn, "w", "p", "rowan", "wren", 1.2, roll=0.9)["shared"]
 
 
+def test_a_handover_is_not_retold(conn):
+    from backend.game import accept_quest, handin
+    accept_quest(conn, "w:p", "find_apples")
+    handin(conn, "w", "p", "elise", {"default:apple": 3}, 1.0)
+    assert gossip(conn, "w", "p", "elise", "rowan", 5.0, roll=0)["shared"] is False
+    assert db.top_memories(conn, "rowan", "w:p") == []
+
+
 def test_gossip_noop(conn):
     assert gossip(conn, "w", "p", "elise", "mira", 3.0, roll=0) == {"shared": False, "line": None, "reply": None}
 
@@ -401,11 +484,16 @@ def test_nearest_witness_when_target_absent(conn):
     assert r["react"] == ["mira", "rowan"]
 
 
-def test_moods(conn):
+def test_moods_follow_stance_and_the_shunning_ends(conn):
     record_event(conn, MockLLM(), ev("hit_npc", witnesses=["elise"]))
     m = moods(conn, "w", "p", 1.2)
-    assert m["elise"] == "afraid" and m["mira"] == "neutral"
-    assert moods(conn, "w", "p", 2.0)["elise"] == "wary"
+    assert m["elise"] == {"mood": "angry", "shun": True} and m["mira"] == {"mood": "neutral", "shun": False}
+    assert moods(conn, "w", "p", 4.0)["elise"] == {"mood": "guarded", "shun": False}
+
+
+def test_a_shunned_villager_will_not_trade(conn):
+    record_event(conn, MockLLM(), ev("hit_npc", witnesses=["elise"]))
+    assert trade_quote(conn, "w", "p", "elise", True, 1.2) == {"ok": False, "reason": "shunned"}
 
 
 def test_greet_retries_once_on_invalid(conn):
@@ -420,11 +508,29 @@ def test_greet_retries_once_on_invalid(conn):
 # --- guidance and pointing ---
 
 def test_context_has_guide(conn):
-    from backend.game import build_context
-    g = build_context(conn, "elise", "w:p")["facts"]["guide"]
-    assert g["suggested"] and all({"title", "giver", "where"} <= set(q) for q in g["suggested"])
-    assert "town_hall" in g["places"] and "rowan" in g["places"]
-    assert g["festival"]["level_needed"] == 3
+    from backend.game import accept_quest, build_context
+    accept_quest(conn, "w:p", "find_apples")
+    facts = build_context(conn, "rowan", "w:p")["facts"]
+    assert "town_hall" in facts["guide"]["places"] and "rowan" in facts["guide"]["places"]
+    assert "active_quests" not in facts["guide"] and "festival" not in facts["guide"]
+    assert "open_quests" not in facts
+    assert "Find 3 apples" not in json.dumps(facts)
+    assert "own work" in facts["bent"]
+    assert "other people" in build_context(conn, "nell", "w:p")["facts"]["bent"]
+    assert "both ways" in build_context(conn, "tobin", "w:p")["facts"]["bent"]
+    db.add_trust(conn, "tobin", "w:p", -20)
+    assert "own work" in build_context(conn, "tobin", "w:p")["facts"]["bent"]
+    db.add_trust(conn, "tobin", "w:p", 40)
+    assert "other people" in build_context(conn, "tobin", "w:p")["facts"]["bent"]
+
+
+def test_a_greeting_carries_only_that_villager(conn):
+    llm = ScriptedLLM([{"reply": "Morning.", "claims": []}])
+    greet(conn, llm, "w", "p", "elise", "g", 1.0)
+    facts = llm.calls[0][1]["facts"]
+    assert "busy" not in facts and "regard" not in facts and "lean" not in facts
+    assert "items" not in llm.calls[0][1] and "player" not in llm.calls[0][1]
+    assert set(facts["guide"]) == {"places"}
 
 
 def test_talk_returns_valid_point_to(conn):
@@ -436,5 +542,105 @@ def test_talk_returns_valid_point_to(conn):
 
 def test_failed_reply_falls_back_to_guidance(conn):
     bad = {"reply": "x", "claims": [{"event_id": 99, "type": "gift", "how": "witnessed"}]}
-    r = talk(conn, ScriptedLLM([Q, bad, bad]), "w", "p", "elise", "what should I do?", "t", 1.0)
-    assert r["reply"] != NEUTRAL_LINE and r["point_to"]
+    r = talk(conn, ScriptedLLM([Q, bad, bad]), "w", "p", "elise", "hello there", "t", 1.0)
+    assert r["reply"] == "Sorry, say that once more." and r["point_to"] is None
+
+
+def test_a_lost_player_is_told_where_to_go(conn):
+    from backend.game import CONFIG, own_need
+    for npc_id in CONFIG["npcs"]:
+        need = own_need(conn, "w:p", npc_id)
+        assert need and len(need["steps"]) > 20
+    vague = {"reply": "Wander about, you'll find something.", "claims": []}
+    clear = {"reply": "Head to the orchard and pick apples.", "claims": [], "point_to": "orchard"}
+    llm = ScriptedLLM([vague, clear])
+    r = talk(conn, llm, "w", "p", "elise", "I'm lost, what should I do?", "t", 1.0)
+    assert r["reply"] == "Head to the orchard and pick apples." and r["point_to"] == "orchard"
+    assert llm.calls[0][1]["facts"]["lost"] is True
+    assert "orchard" in llm.calls[0][1]["facts"]["directions"]
+    assert "no_directions" in llm.calls[1][1]["validator_feedback"]
+    failed = talk(conn, ScriptedLLM([Q, vague, vague]), "w", "p", "rowan", "what do I do", "t", 1.0)
+    assert "iron" in failed["reply"] and failed["point_to"] == "mine"
+
+
+def test_the_model_is_given_the_conversation_so_far(conn):
+    llm = ScriptedLLM([{"reply": "I'm Hazel.", "claims": []}, {"reply": "Pleased.", "claims": []}])
+    talk(conn, llm, "w", "p", "hazel", "who are you?", "t", 1.0)
+    talk(conn, llm, "w", "p", "hazel", "is that your real name?", "t", 1.1)
+    recent = [u for t, u in llm.calls if t == "npc_dialogue"][1]["facts"]["recent"]
+    assert recent == [{"who": "you", "text": "who are you?"}, {"who": "them", "text": "I'm Hazel."}]
+
+
+def test_a_victim_passes_it_on_the_first_time_they_meet_someone(conn):
+    from backend.game import gossip
+    record_event(conn, ScriptedLLM([]), {"world": "w", "player": "p", "type": "hit_npc", "target": "elise",
+                                         "witnesses": ["elise"], "game_time": 1.0, "details": {}})
+    # a bystander would wait out the delay; the victim does not, and is not shy
+    assert gossip(conn, "w", "p", "elise", "mira", 1.0, roll=0.99)["shared"]
+    assert db.top_memories(conn, "mira", "w:p")[0]["how"] == "told_by:elise"
+
+
+CRY = {"world": "w", "player": "p", "type": "hit_npc", "target": "elise", "witnesses": ["elise", "pip"],
+       "heard": ["nell", "wren", "mira"], "game_time": 1.0, "details": {}}
+
+
+def test_a_cry_is_heard_and_the_game_decides_who_moves(conn):
+    r = record_event(conn, ScriptedLLM([]), CRY)
+    assert db.top_memories(conn, "nell", "w:p")[0]["text"] == "I heard Elise cry out"
+    assert db.get_trust(conn, "nell", "w:p") == 10  # hearing is not seeing
+    assert r["scene"] == {"victim": "elise", "victim_mood": "angry", "rescuers": ["nell"],
+                          "tattlers": ["pip"], "guard": "wren"}  # Mira only heard: nothing to tell the guard
+    assert r["react"] == ["elise", "pip", "wren"]  # the victim, a witness and the guard speak; the rest just move
+
+
+def test_a_villager_who_only_heard_the_cry_is_not_told_who_did_it(conn):
+    import json
+    r = record_event(conn, ScriptedLLM([]), CRY)
+    llm = ScriptedLLM([{"shout": "Elise? What happened?", "claims": []}])
+    react(conn, llm, "w", "p", r["event_id"], ["wren"])
+    sent = json.dumps(llm.calls[0][1])
+    assert "Elise cry out" in sent and "newcomer hit" not in sent
+
+
+def test_only_a_known_deed_costs_reputation(conn):
+    from backend.story import profile
+    record_event(conn, ScriptedLLM([]), ev("theft"))  # nobody saw
+    assert not any(d["n"] for d in profile(conn, "w:p"))
+    r = record_event(conn, ScriptedLLM([]), ev("hit_npc", witnesses=["elise"]))
+    dims = {d["dimension"]: d["value"] for d in profile(conn, "w:p")}
+    assert dims["compassion"] == -0.8 and "Word will spread." in r["notices"]
+
+
+def test_people_lists_only_those_met_with_the_mood_of_the_last_meeting(conn):
+    from backend.game import people
+    assert people(conn, "w", "p")["met"] == []
+    greet(conn, ScriptedLLM([{"reply": "Hello.", "claims": []}]), "w", "p", "elise", "g", 1.0)
+    record_event(conn, MockLLM(), ev("hit_npc", witnesses=["elise"], game_time=1.1))  # off screen: not shown yet
+    p = people(conn, "w", "p")
+    assert [(m["npc_id"], m["mood"]) for m in p["met"]] == [("elise", "neutral")] and p["standing"] == "Newcomer"
+
+
+def test_a_plain_question_skips_the_classifier(conn):
+    llm = ScriptedLLM([{"reply": "I'm Hazel.", "claims": []}])
+    talk(conn, llm, "w", "p", "hazel", "who are you?", "t", 1.0)
+    assert [t for t, _ in llm.calls] == ["npc_dialogue"]
+
+
+def test_an_insulting_question_is_still_classified(conn):
+    insult = {"intent": "insult", "confidence": 0.95, "promise": None, "claim": None}
+    llm = ScriptedLLM([insult, {"reply": "Mind your tongue.", "claims": []}])
+    talk(conn, llm, "w", "p", "hazel", "are you always this useless?", "t", 1.0)
+    assert [t for t, _ in llm.calls][0] == "intent_classify"
+
+
+def test_every_quest_tells_the_player_where_and_how():
+    from backend.game import CONFIG, NEED_HOW, NEED_PLACE
+    for npc, cfg in CONFIG["npcs"].items():
+        for q in cfg.get("quests") or []:
+            if q.get("kind") == "slay":
+                continue
+            item = q["item"]
+            assert item in NEED_HOW, f"{npc}: no directions for {item}"
+            place = NEED_PLACE.get(item)
+            assert place is None or place in CONFIG["places"] or place in CONFIG["npcs"], f"{npc}: {item} -> {place}"
+            assert (q.get("count") or 1) <= 12, f"{npc}: {item} count is too long a chore"

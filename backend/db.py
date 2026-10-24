@@ -59,7 +59,7 @@ def connect(path: str) -> sqlite3.Connection:
 
 # Columns added after v1. "create table if not exists" won't add them to an existing save, so add them here.
 LATER_COLUMNS = {"memories": {"learned_at": "real"},
-                 "situations": {"told": "text"},
+                 "situations": {"told": "text", "motive": "text", "hidden_from": "text"},
                  "promises": {"title": "text", "xp": "integer", "trust": "integer", "quest_id": "text",
                               "target": "text", "total": "integer"}}
 
@@ -132,9 +132,30 @@ def add_memory(conn, npc_id, player, event_id, type, text, how, reliability, sev
 
 def top_memories(conn, npc_id, player, limit=5) -> list[dict]:
     # ponytail: severity+recency ranking, no embeddings; add semantic retrieval if memories grow past ~100/NPC
-    rows = conn.execute("select event_id, type, text, how, reliability from memories where npc_id=? and player=? "
-                        "order by severity desc, ts desc, id desc limit ?", (npc_id, player, limit))
+    rows = conn.execute("select event_id, type, text, how, reliability, learned_at from memories where npc_id=? and player=? "
+                        "and type != 'walk_away' order by severity desc, ts desc, id desc limit ?",
+                        (npc_id, player, limit))
     return [dict(r) for r in rows]
+
+
+def recent_turns(conn, npc_id, player, limit=6) -> list[dict]:
+    """The last lines of this one conversation, oldest first. Scenes and event shouts are not conversation."""
+    rows = conn.execute(
+        "select request, reply from interactions where npc_id=? and player=? and task='npc_dialogue' "
+        "and ifnull(retried,0)=0 and thread_id not like '%:scene:%' and validator_result like '%\"ok\": true%' "
+        "order by id desc limit ?", (npc_id, player, limit)).fetchall()
+    turns = []
+    for r in reversed(rows):
+        try:
+            said = json.loads(r["request"]).get("player_message")
+            reply = json.loads(r["reply"]).get("reply")
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if said:
+            turns.append({"who": "you", "text": said})
+        if reply:
+            turns.append({"who": "them", "text": reply})
+    return turns[-limit:]
 
 
 def add_interaction(conn, row: dict) -> int:

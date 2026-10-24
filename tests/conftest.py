@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from backend import db
@@ -26,4 +28,4 @@ class ScriptedLLM:
         from backend.llm import LLMResult
         self.calls.append((task, user))
         data = self.responses.pop(0)
-        return LLMResult(data, "", "mreq_test", 1, 1, None if data is not None else "boom")
+        return LLMResult(data, json.dumps(data) if data is not None else "", "mreq_test", 1, 1, None if data is not None else "boom")

@@ -66,6 +66,16 @@ def _means(conn, player: str) -> dict[str, float]:
     return {dim: sum(weights) / len(weights) for dim, weights in buckets.items()}
 
 
+def profile(conn, player: str) -> list[dict]:
+    """Where the player stands on each dimension, -1 to +1, in the fixed order. A dimension with no evidence is 0."""
+    means = _means(conn, player)
+    _ensure(conn)
+    counts = {r["dimension"]: r["n"] for r in conn.execute(
+        "select dimension, count(*) as n from evidence where player=? group by dimension", (player,))}
+    return [{"dimension": dim, "value": round(means.get(dim, 0.0), 3), "n": counts.get(dim, 0)}
+            for dim in DIMENSIONS]
+
+
 def leading_ending(conn, player: str) -> str | None:
     means = _means(conn, player)
     if not means:
@@ -200,6 +210,7 @@ def report(conn, player: str, game_time: float) -> dict:
         "time": clock_time(game_time % 1),
         "cold": 0.0,
         "sustain": True,
+        "winter": 0.0,
     }
     if choice == "died":
         return out
@@ -207,6 +218,7 @@ def report(conn, player: str, game_time: float) -> dict:
         out["ending"] = choice
         return out
     ph = out["phase"]
+    out["winter"] = round(min(1.0, elapsed / (FINAL_DAY - 1)), 3)  # the world's look: 0 on arrival, 1 on day 10
     if ph in ("closing", "frozen"):
         out["cold"] = cold_rate(elapsed)
         ending = leading_ending(conn, player)

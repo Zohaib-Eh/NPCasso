@@ -41,6 +41,9 @@
       "name": "Elise",
       "role": "Merchant",
       "persona": "Friendly but cautious; values honesty and fair dealing.",
+      "temper": "steady",
+      "reacts_as": "wary",
+      "voice": "Warm on the surface and careful underneath. Tidy, even sentences. Tends to count or weigh things as she talks.",
       "background": "Runs the fruit stall; came to the village after a bad partner cheated her.",
       "loves": [
         "gold_apple"
@@ -81,12 +84,19 @@
       ],
       "kind": "trader",
       "sign": "Elise · Fruit Shop",
-      "location": "her fruit shop, west of the square"
+      "location": "her fruit shop, west of the square",
+      "signs": [
+        "Her crates hold fewer apples than the stall has room for, and she has spread them out to hide it.",
+        "She weighs each apple in her palm before she sets it down."
+      ]
     },
     "rowan": {
       "name": "Rowan",
       "role": "Blacksmith",
       "persona": "Blunt, practical, proud of his craft; respects reliability.",
+      "temper": "hot",
+      "reacts_as": "wary",
+      "voice": "Blunt and clipped. Talks in metal, weight, and heat. Small talk costs him effort and he skips it.",
       "background": "Third-generation smith; the anvil was his grandmother's.",
       "loves": [
         "iron"
@@ -128,12 +138,19 @@
       ],
       "kind": "trader",
       "sign": "Rowan · Forge",
-      "location": "his forge, east of the square"
+      "location": "his forge, east of the square",
+      "signs": [
+        "The forge coals are banked low and he feeds them one lump at a time.",
+        "He is mending a tool that would once have gone straight on the scrap pile."
+      ]
     },
     "mira": {
       "name": "Mira",
       "role": "Innkeeper",
       "persona": "Sociable and observant; loves news, careful to say where she heard it.",
+      "temper": "steady",
+      "reacts_as": "tattler",
+      "voice": "Chatty, leans in close. Starts from some news she heard and always says who she heard it from.",
       "background": "Runs the inn; hears everything that happens in the village.",
       "loves": [
         "flower"
@@ -172,7 +189,11 @@
       ],
       "kind": "trader",
       "sign": "Mira · Tavern",
-      "location": "the tavern, north-west of the square"
+      "location": "the tavern, north-west of the square",
+      "signs": [
+        "The hearth is lit but only one table is laid.",
+        "The stew in the pot is thinner each evening and she calls it the house recipe."
+      ]
     },
     "tobin": {
       "name": "Tobin",
@@ -180,6 +201,9 @@
       "skin": "npcasso_skin_tobin.png",
       "chattiness": 0.5,
       "persona": "Patient and hardworking; measures people by whether they pull their weight.",
+      "temper": "steady",
+      "reacts_as": "protector",
+      "voice": "Slow, dry, plain farmer's talk. Reaches for weather, soil, and the state of the field.",
       "background": "Has farmed the south-west field since he was a boy.",
       "loves": [
         "wheat"
@@ -218,7 +242,11 @@
       ],
       "kind": "villager",
       "sign": "Tobin's Farmhouse",
-      "location": "the village farm, south-west of the square"
+      "location": "the village farm, south-west of the square",
+      "signs": [
+        "The rows run shorter than last year and the far end sits fallow.",
+        "He counts the seed in his palm before he sows it."
+      ]
     },
     "wren": {
       "name": "Wren",
@@ -226,6 +254,9 @@
       "skin": "npcasso_skin_wren.png",
       "chattiness": 0.6,
       "persona": "Stern, dutiful, keeps a mental ledger of every crime; fair to those who help the village.",
+      "temper": "hot",
+      "reacts_as": "guard",
+      "voice": "Clipped and watchful. Speaks like a sentry giving a report, eyes elsewhere.",
       "background": "Keeps watch from the town hall; lost a brother to monsters years ago.",
       "loves": [
         "iron"
@@ -264,7 +295,11 @@
       ],
       "kind": "villager",
       "sign": "Watchtower",
-      "location": "on watch by the town hall, south of the square"
+      "location": "on watch by the town hall, south of the square",
+      "signs": [
+        "The night watch has been doubled and the lamp oil has not.",
+        "She looks at the dark line of the woods more often than at the square."
+      ]
     },
     "pip": {
       "name": "Pip",
@@ -272,6 +307,9 @@
       "skin": "npcasso_skin_pip.png",
       "chattiness": 1.0,
       "persona": "Curious, cheeky, can't keep a secret; loves snacks and adventure stories.",
+      "temper": "timid",
+      "reacts_as": "tattler",
+      "voice": "Quick, breathless, interrupts himself. Asks questions back. Cheeky, and curious about everything.",
       "background": "Runs errands for everyone and hears everything.",
       "loves": [
         "apple",
@@ -305,7 +343,11 @@
       ],
       "kind": "villager",
       "sign": "Pip's Treehouse",
-      "location": "running around the square"
+      "location": "running around the square",
+      "signs": [
+        "Doors stay shut when he knocks, so errands take him longer.",
+        "Nobody has had a spare crust to toss him all week."
+      ]
     },
     "bram": {
       "name": "Bram",
@@ -313,6 +355,9 @@
       "skin": "npcasso_skin_bram.png",
       "chattiness": 0.4,
       "persona": "Wise, measured, values tradition and fairness; speaks for the village.",
+      "temper": "steady",
+      "reacts_as": "protector",
+      "voice": "Measured and formal, full sentences. Likes to set today against what the village has weathered before.",
       "background": "The village elder; hosts the Harvest Festival in the town hall.",
       "loves": [
         "bread"
@@ -344,7 +389,11 @@
       ],
       "kind": "villager",
       "sign": "Bram · Village Elder",
-      "location": "the library at the north end of the village"
+      "location": "the library at the north end of the village",
+      "signs": [
+        "The ledger on his desk has lain open to the same page for days.",
+        "He moved the winter stores into the hall and keeps the key on his belt."
+      ]
     },
     "nell": {
       "name": "Nell",
@@ -352,6 +401,9 @@
       "skin": "npcasso_skin_nell.png",
       "chattiness": 0.8,
       "persona": "Warm, motherly, nosy; feeds everyone and knows everyone's business.",
+      "temper": "steady",
+      "reacts_as": "protector",
+      "voice": "Warm and fussy. Calls people dear. Asks whether they have eaten before she asks anything else.",
       "background": "Bakes for the whole village; her bread is famous.",
       "loves": [
         "flour"
@@ -390,7 +442,11 @@
       ],
       "kind": "trader",
       "sign": "Nell · Bakery",
-      "location": "the bakery, north-east of the square"
+      "location": "the bakery, north-east of the square",
+      "signs": [
+        "The ovens are cold at midday, which has never happened.",
+        "She sets the heel of every loaf aside in a tin."
+      ]
     },
     "corin": {
       "name": "Corin",
@@ -398,6 +454,9 @@
       "skin": "npcasso_skin_corin.png",
       "chattiness": 0.3,
       "persona": "Quiet, superstitious, patient; distrusts loud people.",
+      "temper": "timid",
+      "reacts_as": "wary",
+      "voice": "Few words and long pauses. Speaks of water, birds, and omens. Wary of anyone loud.",
       "background": "Fishes at the village pond at dawn and dusk.",
       "loves": [
         "seeds"
@@ -410,7 +469,6 @@
       ],
       "trade": null,
       "expertise": [
-        "The pond is east of the farm.",
         "Old folk say the dark woods hold worse than wolves."
       ],
       "quests": [
@@ -430,7 +488,11 @@
       ],
       "kind": "villager",
       "sign": "Corin's Cabin",
-      "location": "his cabin by the pond, far west"
+      "location": "his cabin by the pond, far west",
+      "signs": [
+        "The nets come up lighter than they used to and he reads it as a warning.",
+        "He talks to the pond as if it were listening."
+      ]
     },
     "hazel": {
       "name": "Hazel",
@@ -438,6 +500,9 @@
       "skin": "npcasso_skin_hazel.png",
       "chattiness": 0.5,
       "persona": "Gentle, thoughtful, speaks softly; believes everyone can mend their ways.",
+      "temper": "timid",
+      "reacts_as": "protector",
+      "voice": "Soft and unhurried. Wonders aloud. Speaks to people as if they were already a little hurt.",
       "background": "Grows herbs and tends the sick.",
       "loves": [
         "flower"
@@ -471,7 +536,11 @@
       ],
       "kind": "villager",
       "sign": "Hazel · Herbalist",
-      "location": "her garden house on the west side of the village"
+      "location": "her garden house on the west side of the village",
+      "signs": [
+        "Her herb beds are bare in patches where she has picked for the sick.",
+        "She hands out a pinch of something where she used to hand out a bunch."
+      ]
     },
     "dax": {
       "name": "Dax",
@@ -479,6 +548,9 @@
       "skin": "npcasso_skin_dax.png",
       "chattiness": 0.4,
       "persona": "Rough, gruff, distrusts newcomers until they prove themselves.",
+      "temper": "hot",
+      "reacts_as": "wary",
+      "voice": "Gruff, near to grunting. Answers a question with a question. Slow to trust a face.",
       "background": "Digs the hills for coal and iron; sells ore to Rowan.",
       "loves": [
         "coal"
@@ -517,7 +589,11 @@
       ],
       "kind": "trader",
       "sign": "Dax · Ores",
-      "location": "his ore shop, south-east of the square"
+      "location": "his ore shop, south-east of the square",
+      "signs": [
+        "The easy seams are picked clean, so he works the same wall twice.",
+        "There are gaps on his shelves that he has stopped covering up."
+      ]
     },
     "lottie": {
       "name": "Lottie",
@@ -525,6 +601,9 @@
       "skin": "npcasso_skin_lottie.png",
       "chattiness": 0.7,
       "persona": "Cheerful, chatty, adores animals; upset by cruelty.",
+      "temper": "timid",
+      "reacts_as": "protector",
+      "voice": "Bright and chatty. Wanders off mid-sentence to talk to an animal, then comes back.",
       "background": "Keeps the village sheep in the pen by the meadow.",
       "loves": [
         "wool"
@@ -558,7 +637,11 @@
       ],
       "kind": "villager",
       "sign": "Lottie's Cottage",
-      "location": "her cottage by the sheep pen, north-east"
+      "location": "her cottage by the sheep pen, north-east",
+      "signs": [
+        "The sheep are thinner under their wool and she can name every one.",
+        "She keeps the lambs to the near pasture now."
+      ]
     }
   },
   "world_knowledge": [
@@ -566,8 +649,7 @@
     "Iron: mine iron ore from stone with a pickaxe, then smelt it in a furnace (with coal) into iron ingots.",
     "Farming: make a hoe, till dirt or grass close to water, plant wheat seeds (cut tall grass to find them), and harvest the wheat once it turns golden.",
     "Bread: grind wheat into flour on the crafting grid, then bake the flour in a furnace.",
-    "Crafting: open your inventory with I and use the crafting grid; tree trunks make wooden planks and planks make sticks.",
-    "The village: Elise's fruit stall is west of the square, Rowan's forge east, Mira's inn north, the town hall south-east, the wheat farm south-west, the apple orchard far west, the flower meadow north-west by the pond, and Dax's little mine with coal and iron showing in the rock far south-east."
+    "Crafting: open your inventory with I and use the crafting grid; tree trunks make wooden planks and planks make sticks."
   ],
   "places": {
     "town_hall": "the big town hall south of the square; the quest board and a crafting table are inside",

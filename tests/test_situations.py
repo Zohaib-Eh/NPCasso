@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from backend import db, situations
@@ -8,7 +10,8 @@ from tests.conftest import ScriptedLLM
 
 Q = {"intent": "question", "confidence": 0.5, "promise": None, "claim": None}
 WOOD = {"text": "Mira's boy is coughing and her house has no firewood, but Rowan keeps the last logs.",
-        "involves": ["mira", "rowan"]}
+        "involves": ["mira", "rowan"],
+        "motive": "The boy is cold, and Rowan is holding the last logs for the forge."}
 
 
 def opened(text="Rowan will not spare his logs, and Mira's boy is coughing.", **kw):
@@ -62,7 +65,8 @@ def test_a_villager_is_in_one_open_situation_at_a_time(conn):
     anchor(conn, "w:p", 0.0)
     greet(conn, ScriptedLLM([opened()]), "w", "p", "elise", "g", 2.0)
     assert situations.facts(conn, "w:p", "tobin", 2.3)["busy"] == ["elise", "mira", "rowan"]
-    again = {"reply": "x", "claims": [], "situation": {"text": "More wood trouble.", "involves": ["mira"]}}
+    again = {"reply": "x", "claims": [], "situation": {"text": "More wood trouble.", "involves": ["mira"],
+             "motive": "The kiln is cold and Mira still has the last stack."}}
     assert "situation_duplicate" in validate("npc_dialogue", again, {"facts": situations.facts(
         conn, "w:p", "tobin", 2.3), "memories": []})["errors"]
 
@@ -75,7 +79,8 @@ def test_a_situation_needs_someone_besides_the_opener(conn):
 
 def test_the_situation_cannot_be_about_the_player(conn):
     ctx = {"facts": {"may_open": True}, "memories": []}
-    bad = {"reply": "x", "claims": [], "situation": {"text": "The newcomer stole wood.", "involves": ["rowan"]}}
+    bad = {"reply": "x", "claims": [], "situation": {"text": "The newcomer stole wood.", "involves": ["rowan"],
+           "motive": "The stall was short and someone had to answer for it."}}
     assert "situation_about_player" in validate("npc_dialogue", bad, ctx)["errors"]
     bad = {"reply": "x", "claims": [], "situation": {"text": "Wood is short.", "involves": ["nobody"]}}
     assert "situation_malformed" in validate("npc_dialogue", bad, ctx)["errors"]
@@ -118,7 +123,54 @@ def test_a_consequence_needs_something_to_resolve(conn):
     assert "consequence_not_allowed" in validate("npc_dialogue", out, ctx)["errors"]
 
 
+def test_a_secret_stays_with_the_people_who_know(conn):
+    anchor(conn, "w:p", 0.0)
+    secret = {"text": "Elise asked Nell to hide a sack of flour.", "involves": ["nell"], "hidden_from": ["rowan"],
+              "motive": "Elise still owes Rowan for the anvil, and this flour is all she can spare."}
+    greet(conn, ScriptedLLM([opened(situation=secret)]), "w", "p", "elise", "g", 0.4)
+    assert db.top_memories(conn, "rowan", "w:p") == []
+    assert "anvil" in db.top_memories(conn, "elise", "w:p")[0]["text"]
+    assert "flour" in db.top_memories(conn, "nell", "w:p")[0]["text"]
+    assert "open_situation" not in situations.facts(conn, "w:p", "rowan", 0.5)
+    assert situations.facts(conn, "w:p", "nell", 0.5)["open_situation"]["hidden_from"] == ["rowan"]
+    told = {"reply": "Rowan will feel this.", "claims": [],
+            "consequence": {"npc_id": "rowan", "text": "Rowan finds the flour gone.", "stance": "hurt"}}
+    facts = situations.facts(conn, "w:p", "elise", 0.5)
+    assert "consequence_hidden" in validate("npc_dialogue", told, {"facts": facts, "memories": []})["errors"]
+    situations.take(conn, "w:p", "elise", told, 0.6, facts)
+    assert db.top_memories(conn, "rowan", "w:p") == []
+    llm = ScriptedLLM([{"reply": "Morning.", "claims": []}])
+    greet(conn, llm, "w", "p", "rowan", "g2", 0.8)
+    assert "hide a sack of flour" not in json.dumps(llm.calls[0][1])
+
+
+def test_saying_you_will_hand_something_over_must_give_it(conn):
+    ctx = {"facts": {"stock": ["flour"]}, "memories": []}
+    bare = {"reply": "I'll hand you the flour.", "claims": []}
+    assert "promised_gift" in validate("npc_dialogue", bare, ctx)["errors"]
+    given = {**bare, "give_item": {"item": "flour", "count": 1}}
+    assert validate("npc_dialogue", given, ctx)["ok"]
+
+
+def test_a_handed_item_arrives_once_per_day(conn):
+    anchor(conn, "w:p", 0.0)
+    line = {"reply": "I'll hand you the flour.", "claims": [], "give_item": {"item": "flour", "count": 1}}
+    first = talk(conn, ScriptedLLM([Q, line]), "w", "p", "nell", "May I take the flour?", "t", 1.0)
+    assert first["give"] == [{"item": "farming:flour", "count": 1}]
+    second = talk(conn, ScriptedLLM([Q, line]), "w", "p", "nell", "Another sack?", "t", 1.2)
+    assert second["give"] == []
+
+
 def test_a_situation_is_never_passed_on_as_gossip(conn):
     anchor(conn, "w:p", 0.0)
     greet(conn, ScriptedLLM([opened()]), "w", "p", "elise", "g", 0.4)
     assert gossip(conn, "w", "p", "elise", "pip", 9.0, roll=0)["shared"] is False
+
+
+def test_one_villagers_private_memory_never_reaches_another(conn):
+    from backend.db import load_config
+    from backend.game import _heard, build_context
+    db.add_memory(conn, "elise", "w:p", None, "gift", "CANARY the newcomer gave me a ruby", "witnessed", 1.0, 5, 1.0)
+    assert "CANARY" in json.dumps(_heard(build_context(conn, "elise", "w:p", game_time=1.0)))
+    for n in (n for n in load_config()["npcs"] if n != "elise"):
+        assert "CANARY" not in json.dumps(_heard(build_context(conn, n, "w:p", game_time=1.0)))

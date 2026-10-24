@@ -107,7 +107,45 @@ local function place_building(o, b)
 	else
 		out = {x = center.x + unit[1] * 8, y = o.y, z = center.z + unit[2] * 8}
 	end
+	-- Cottage schematics place furnaces without on_construct, so src/fuel/dst never exist.
+	-- A saved node timer then crashes in get_craft_result.
+	if minp and core.registered_nodes["default:furnace"] then
+		for _, pos in ipairs(core.find_nodes_in_area(minp, maxp, {"default:furnace", "default:furnace_active"})) do
+			npcasso.ensure_furnace(pos)
+		end
+	end
 	return out, unit, minp, maxp, door
+end
+
+-- Schematic furnaces have a node timer but no inventory until something creates the lists.
+local furnace_timer = core.registered_nodes["default:furnace"] and core.registered_nodes["default:furnace"].on_timer
+function npcasso.ensure_furnace(pos)
+	local inv = core.get_meta(pos):get_inventory()
+	if inv:get_list("src") and inv:get_list("fuel") and inv:get_list("dst") then return end
+	inv:set_size("src", 1)
+	inv:set_size("fuel", 1)
+	inv:set_size("dst", 4)
+	if furnace_timer then furnace_timer(pos, 0) end
+end
+if furnace_timer then
+	local function guarded_timer(pos, elapsed)
+		local inv = core.get_meta(pos):get_inventory()
+		if not (inv:get_list("src") and inv:get_list("fuel") and inv:get_list("dst")) then
+			inv:set_size("src", 1)
+			inv:set_size("fuel", 1)
+			inv:set_size("dst", 4)
+		end
+		return furnace_timer(pos, elapsed)
+	end
+	core.override_item("default:furnace", {on_timer = guarded_timer})
+	core.override_item("default:furnace_active", {on_timer = guarded_timer})
+	core.register_lbm({
+		label = "Give schematic furnaces their inventories",
+		name = "npcasso:furnace_lists",
+		nodenames = {"default:furnace", "default:furnace_active"},
+		run_at_every_load = false,
+		action = function(pos) npcasso.ensure_furnace(pos) end,
+	})
 end
 
 local function walkable(p) local d = core.registered_nodes[core.get_node(p).name]; return d and d.walkable end
@@ -151,51 +189,164 @@ local function surface(x, z, top, bottom)
 	end
 end
 
--- Quest resources live out in the countryside (between the village and the soft border).
-local function countryside(o)
-	local function at(dx, dz) local y = surface(o.x + dx, o.z + dz, o.y + 25, o.y - 25); return y end
-	local function set(dx, y, dz, name) core.set_node({x = o.x + dx, y = y, z = o.z + dz}, {name = name}) end
-	local tree, leaves, apple = "default:tree", "default:leaves", "default:apple"
-	-- Apple orchard, far west
+-- A whole apple tree: trunk, a canopy close enough that leaves do not decay, apples sitting in the leaves.
+local function apple_tree_ok(pos)
+	local height = 0
+	while height < 14 and core.get_node(vector.offset(pos, 0, height + 1, 0)).name == "default:tree" do
+		height = height + 1
+	end
+	if height < 4 then return false end
+	local leaves = core.find_nodes_in_area(vector.offset(pos, -2, 1, -2), vector.offset(pos, 2, 12, 2),
+		{"default:leaves", "default:apple"})
+	return #leaves >= 10
+end
+
+local function plant_apple_tree(pos)
+	local trunks = {}
+	for y = 1, 12 do
+		for x = -2, 2 do
+			for z = -2, 2 do
+				local p = vector.offset(pos, x, y, z)
+				local n = core.get_node(p).name
+				if n == "default:leaves" or n == "default:apple" or n == "default:apple_mark" then
+					core.set_node(p, {name = "air"})  -- leaves first, so removing the trunk does not decay the neighbours
+				elseif n == "default:tree" then
+					table.insert(trunks, p)
+				end
+			end
+		end
+	end
+	for _, p in ipairs(trunks) do core.set_node(p, {name = "air"}) end
+	local function put(x, y, z, name, param2)
+		core.set_node(vector.offset(pos, x, y, z), {name = name, param2 = param2 or 0})
+	end
+	for h = 1, 4 do put(0, h, 0, "default:tree") end
+	for y = 3, 5 do
+		for x = -1, 1 do
+			for z = -1, 1 do
+				if not (x == 0 and z == 0 and y <= 4) then put(x, y, z, "default:leaves", 1) end
+			end
+		end
+	end
+	put(0, 6, 0, "default:leaves", 1)
+	for _, a in ipairs({{1, 4, 0}, {-1, 4, 0}, {0, 4, 1}, {0, 5, -1}}) do
+		put(a[1], a[2], a[3], "default:apple")
+	end
+end
+
+local function plant_orchard(o, at)
 	for dx = -80, -66, 5 do
 		for dz = -12, 12, 6 do
 			local y = at(dx, dz)
 			if y then
-				for h = 1, 3 do set(dx, y + h, dz, tree) end
-				for ax = -1, 1 do for az = -1, 1 do for ay = 4, 5 do set(dx + ax, y + ay, dz + az, leaves) end end end
-				set(dx, y + 6, dz, leaves)
-				set(dx + 1, y + 3, dz, apple); set(dx - 1, y + 3, dz + 1, apple)
+				local pos = {x = o.x + dx, y = y, z = o.z + dz}
+				if not apple_tree_ok(pos) then plant_apple_tree(pos) end
 			end
 		end
 	end
-	-- Flower meadow, far north
+end
+
+-- Quest resources live out in the countryside (between the village and the soft border). Each site is built
+-- only after its area is loaded: set_node into an unloaded block is silently lost, which left quests pointing at
+-- places that did not exist.
+local SITE_BOX = {  -- x1, x2, z1, z2, relative to the square
+	orchard = {-80, -66, -12, 12}, meadow = {-14, 14, 66, 82},
+	mine = {64, 76, -61, -49}, wheat_field = {-66, -54, -66, -54},
+}
+local SITE_PROBE = {  -- node, how many must be standing there
+	orchard = {"default:apple", 3}, meadow = {"flowers:rose", 1},
+	mine = {"default:stone_with_iron", 1}, wheat_field = {"farming:wheat_8", 20},
+}
+
+function npcasso.site_status(o)
+	local out = {}
+	for name, b in pairs(SITE_BOX) do
+		local mid = vector.offset(o, (b[1] + b[2]) / 2, 0, (b[3] + b[4]) / 2)
+		if core.get_node_or_nil(mid) == nil then
+			out[name] = "UNLOADED"
+		else
+			local found = core.find_nodes_in_area(vector.offset(o, b[1], -30, b[3]), vector.offset(o, b[2], 45, b[4]),
+				{SITE_PROBE[name][1]})
+			out[name] = #found >= SITE_PROBE[name][2] and "OK" or "MISSING"
+		end
+	end
+	return out
+end
+
+local function set_at(o, dx, y, dz, name) core.set_node({x = o.x + dx, y = y, z = o.z + dz}, {name = name}) end
+
+local function build_orchard(o, at)
+	-- A tree already standing here is left alone: overwriting its trunk starts leaf decay and the rest of
+	-- the seed's apple trees fall apart.
+	plant_orchard(o, at)
+end
+
+local function build_meadow(o, at)
 	local flowers = {"flowers:rose", "flowers:tulip", "flowers:viola", "flowers:dandelion_yellow", "flowers:rose"}
 	for dx = -14, 14, 2 do
 		for dz = 66, 82, 2 do
 			local y = at(dx, dz)
-			if y then set(dx, y + 1, dz, flowers[((dx + dz) % 5) + 1]) end
-		end
-	end
-	-- Dax's mine hill with coal and iron showing, far south-east
-	local base = at(70, -55) or o.y - 1
-	for h = 0, 4 do
-		for dx = 64 + h, 76 - h do for dz = -61 + h, -49 - h do set(dx, base + 1 + h, dz, "default:stone") end end
-	end
-	for i = 0, 12 do
-		set(64 + i, base + 1, -49, i % 2 == 0 and "default:stone_with_coal" or "default:stone_with_iron")
-		set(64, base + 1 + (i % 3), -61 + i, i % 3 == 0 and "default:stone_with_iron" or "default:stone_with_coal")
-	end
-	set(70, base + 6, -55, "default:torch")
-	-- Big wheat field, far south-west (flattened to one level, with a water channel)
-	local fy = at(-60, -60) or o.y - 1
-	for dx = -66, -54 do
-		for dz = -66, -54 do
-			for y = fy + 1, fy + 6 do set(dx, y, dz, "air") end
-			if dx == -60 then set(dx, fy, dz, "default:water_source")
-			else set(dx, fy, dz, "farming:soil_wet"); set(dx, fy + 1, dz, "farming:wheat_8") end
+			if y then set_at(o, dx, y + 1, dz, flowers[((dx + dz) % 5) + 1]) end
 		end
 	end
 end
+
+local function build_mine(o, at)  -- Dax's hill with coal and iron showing
+	local base = at(70, -55) or o.y - 1
+	for h = 0, 4 do
+		for dx = 64 + h, 76 - h do for dz = -61 + h, -49 - h do set_at(o, dx, base + 1 + h, dz, "default:stone") end end
+	end
+	for i = 0, 12 do
+		set_at(o, 64 + i, base + 1, -49, i % 2 == 0 and "default:stone_with_coal" or "default:stone_with_iron")
+		set_at(o, 64, base + 1 + (i % 3), -61 + i, i % 3 == 0 and "default:stone_with_iron" or "default:stone_with_coal")
+	end
+	set_at(o, 70, base + 6, -55, "default:torch")
+end
+
+local function build_wheat(o, at)  -- one level, with a water channel
+	local fy = at(-60, -60) or o.y - 1
+	for dx = -66, -54 do
+		for dz = -66, -54 do
+			for y = fy + 1, fy + 6 do set_at(o, dx, y, dz, "air") end
+			if dx == -60 then set_at(o, dx, fy, dz, "default:water_source")
+			else set_at(o, dx, fy, dz, "farming:soil_wet"); set_at(o, dx, fy + 1, dz, "farming:wheat_8") end
+		end
+	end
+end
+
+local BUILD = {orchard = build_orchard, meadow = build_meadow, mine = build_mine, wheat_field = build_wheat}
+
+local function build_site(o, name)
+	local b = SITE_BOX[name]
+	core.emerge_area(vector.offset(o, b[1] - 8, -30, b[3] - 8), vector.offset(o, b[2] + 8, 45, b[4] + 8),
+		function(_, _, remaining)
+			if remaining ~= 0 then return end
+			local function at(dx, dz) return surface(o.x + dx, o.z + dz, o.y + 25, o.y - 25) end
+			BUILD[name](o, at)
+			local ok = npcasso.site_status(o)[name] == "OK"
+			npcasso.store:set_string("site:" .. name, ok and "ok" or "")
+			if not ok then core.log("error", "[npcasso] site " .. name .. " did not build") end
+		end)
+end
+
+local function countryside(o)
+	for name in pairs(SITE_BOX) do build_site(o, name) end
+end
+
+-- Whatever did not build is retried once the player is in the world.
+core.register_on_joinplayer(function()
+	core.after(4, function()
+		local o = npcasso.village and npcasso.village()
+		if not o then return end
+		local status = npcasso.site_status(o)
+		for name in pairs(SITE_BOX) do
+			if npcasso.store:get_string("site:" .. name) ~= "ok" then
+				if status[name] == "OK" then npcasso.store:set_string("site:" .. name, "ok")  -- already standing
+				else build_site(o, name) end
+			end
+		end
+	end)
+end)
 
 -- Run by build_village after the base layout, before villagers are spawned.
 function npcasso.after_layout(o)
@@ -340,9 +491,9 @@ local function quest_row(y, q, button)
 		(button or "")
 end
 
-local function quests_fs(title, rows, footer)
+local function quests_fs(title, rows, footer, tabs)
 	local h = math.max(1, #rows) * 1.25
-	local fs = "formspec_version[6]size[14,11]" .. BTN ..
+	local fs = "formspec_version[6]size[14,11]" .. (tabs or "") .. BTN ..
 		"hypertext[0.4,0.3;13,0.8;t;" .. esc("<big><b>" .. plain(title) .. "</b></big>") .. "]" ..
 		"box[0.3,1.1;13.4,7.9;#00000055]" ..
 		"scroll_container[0.4,1.2;12.6,7.7;qscroll;vertical;0.1]"
@@ -383,7 +534,13 @@ function npcasso.show_board(name)
 	end)
 end
 
-function npcasso.show_journal(name)
+local JOURNAL_TABS = "tabheader[0,0;jtab;Quests,Character,People;%d;false;true]"
+
+function npcasso.show_journal(name, tab)
+	tab = tab or 1
+	local tabs = JOURNAL_TABS:format(tab)
+	if tab == 2 then return npcasso.show_radar(name, tabs) end
+	if tab == 3 then return npcasso.show_people(name, tabs) end
 	npcasso.get(("/quests?world=%s&player=%s"):format(npcasso.world(), name), function(q)
 		if not q then return end
 		local rows = {}
@@ -391,7 +548,7 @@ function npcasso.show_journal(name)
 		for _, a in ipairs(q.journal.done) do
 			table.insert(rows, function(y) return quest_row(y, {title = a.title .. "  (done)", npc = a.npc, item = a.item}) end)
 		end
-		core.show_formspec(name, "npcasso:journal", quests_fs("Journal", rows, "button_exit[11,9.4;2.5,0.9;close;Close]"))
+		core.show_formspec(name, "npcasso:journal", quests_fs("Journal", rows, "button_exit[11,9.4;2.5,0.9;close;Close]", tabs))
 	end)
 end
 
@@ -444,7 +601,10 @@ end
 local function accept(player, quest, reopen)
 	local name = player:get_player_name()
 	npcasso.post("/quest/accept", {world = npcasso.world(), player = name, quest_id = quest.id}, function(out)
-		if out then npcasso.feed(player, "New quest: " .. quest.title, 0x9AD0FF) end
+		if out then
+			npcasso.feed(player, "New quest: " .. quest.title, 0x9AD0FF)
+			npcasso.cue("accept", name, 0.6)
+		end
 		reopen()
 	end)
 end
@@ -468,10 +628,13 @@ core.register_on_player_receive_fields(function(player, formname, fields)
 			if i then accept(player, mine.available[i], function() npcasso.show_npc_quests(player, mine.npc) end) end
 		end
 		if fields.handin then handin(player, mine.npc) end
-		if fields.back then npcasso.open_talk(player, mine.npc) end
-		if fields.quit or fields.close then npcasso.on_talk_closed(name, mine.npc); npcasso.save_chat(name); npcasso.talk[name] = nil end
+		if fields.back then mine.held = true; npcasso.open_talk(player, mine.npc) end
+		if (fields.quit or fields.close) and not (mine.held or fields.back) then
+			npcasso.on_talk_closed(name, mine.npc); npcasso.save_chat(name); npcasso.talk[name] = nil
+		elseif fields.quit then mine.held = false end
 		return true
 	elseif formname == "npcasso:journal" then
+		if fields.jtab then npcasso.show_journal(name, tonumber(fields.jtab)) end
 		return true
 	end
 end)
