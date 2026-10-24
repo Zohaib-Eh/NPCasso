@@ -142,7 +142,7 @@ def create_app(db_path: str, llm) -> FastAPI:
     @app.get("/npcs")
     def npcs():
         return {k: {"name": v["name"], "role": v["role"], "skin": v.get("skin"),
-                    "work_block": v.get("work_block")} for k, v in game.CONFIG["npcs"].items()}
+                    "work_block": v.get("work_block"), "kind": v.get("kind", "villager"), "sign": v.get("sign")} for k, v in game.CONFIG["npcs"].items()}
 
     @app.post("/event")
     def event(ev: EventIn):

@@ -78,7 +78,9 @@
           "main": true,
           "item": "apple"
         }
-      ]
+      ],
+      "kind": "trader",
+      "sign": "Elise · Fruit Shop"
     },
     "rowan": {
       "name": "Rowan",
@@ -122,7 +124,9 @@
           "main": true,
           "item": "iron"
         }
-      ]
+      ],
+      "kind": "trader",
+      "sign": "Rowan · Forge"
     },
     "mira": {
       "name": "Mira",
@@ -163,7 +167,9 @@
           "main": true,
           "item": "flower"
         }
-      ]
+      ],
+      "kind": "trader",
+      "sign": "Mira · Tavern"
     },
     "tobin": {
       "name": "Tobin",
@@ -206,7 +212,9 @@
           "main": true,
           "item": "wheat"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Tobin's Farmhouse"
     },
     "wren": {
       "name": "Wren",
@@ -249,7 +257,9 @@
           "main": true,
           "mob": "mobs_monster"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Watchtower"
     },
     "pip": {
       "name": "Pip",
@@ -287,7 +297,9 @@
           "main": true,
           "item": "bread"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Pip's Treehouse"
     },
     "bram": {
       "name": "Bram",
@@ -323,7 +335,9 @@
           "main": true,
           "item": "bread"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Bram · Village Elder"
     },
     "nell": {
       "name": "Nell",
@@ -366,7 +380,9 @@
           "main": true,
           "item": "flour"
         }
-      ]
+      ],
+      "kind": "trader",
+      "sign": "Nell · Bakery"
     },
     "corin": {
       "name": "Corin",
@@ -403,7 +419,9 @@
           "main": true,
           "item": "seeds"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Corin's Cabin"
     },
     "hazel": {
       "name": "Hazel",
@@ -441,7 +459,9 @@
           "main": true,
           "item": "flower"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Hazel · Herbalist"
     },
     "dax": {
       "name": "Dax",
@@ -484,7 +504,9 @@
           "main": true,
           "item": "coal"
         }
-      ]
+      ],
+      "kind": "trader",
+      "sign": "Dax · Ores"
     },
     "lottie": {
       "name": "Lottie",
@@ -522,7 +544,9 @@
           "main": true,
           "item": "wheat"
         }
-      ]
+      ],
+      "kind": "villager",
+      "sign": "Lottie's Cottage"
     }
   },
   "world_knowledge": [

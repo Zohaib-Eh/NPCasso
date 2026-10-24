@@ -259,7 +259,7 @@ def test_greet_uses_dialogue_task_without_player_message(conn):
 
 def test_greet_invalid_returns_empty(conn):
     bad = {"reply": "x", "claims": [{"event_id": 5, "type": "gift", "how": "witnessed"}]}
-    assert greet(conn, ScriptedLLM([bad]), "w", "p", "elise", "g", 1.0)["reply"] == ""
+    assert greet(conn, ScriptedLLM([bad, bad]), "w", "p", "elise", "g", 1.0)["reply"] == ""
 
 
 def test_react_memory_is_authoritative_and_event_described(conn):
@@ -369,3 +369,11 @@ def test_moods(conn):
     m = moods(conn, "w", "p", 1.2)
     assert m["elise"] == "afraid" and m["mira"] == "neutral"
     assert moods(conn, "w", "p", 2.0)["elise"] == "wary"
+
+
+def test_greet_retries_once_on_invalid(conn):
+    bad = {"reply": "You kept your promise!", "claims": []}
+    good = {"reply": "Morning, newcomer.", "claims": []}
+    llm = ScriptedLLM([bad, good])
+    assert greet(conn, llm, "w", "p", "elise", "g", 1.0)["reply"] == "Morning, newcomer."
+    assert llm.calls[1][1]["validator_feedback"] == ["unclaimed_mention:promise"]

@@ -85,3 +85,9 @@ def test_quest_routes(db_path):
     assert r["consumed"] == {"default:apple": 3}
     p = c.get("/player", params={"world": "w", "player": "p"}).json()
     assert p["xp"] == 30 and p["quests"]["done"][0]["id"] == "find_apples"
+
+
+def test_npcs_have_kind_and_sign(db_path):
+    n = client(db_path).get("/npcs").json()
+    assert n["elise"]["kind"] == "trader" and n["pip"]["kind"] == "villager"
+    assert n["elise"]["sign"]

@@ -272,10 +272,17 @@ def greet(conn, llm, world, player, npc_id, thread_id, game_time) -> dict:
     """NPC speaks first when the player approaches. Same npc_dialogue task, no player message."""
     player = f"{world}:{player}"
     ctx = build_context(conn, npc_id, player, None, {"situation": GREET_SITUATION})
-    res = llm.complete("npc_dialogue", ctx, thread_id)
-    vres = validate("npc_dialogue", res.data, ctx)
-    log_call(conn, "npc_dialogue", npc_id, player, thread_id, ctx, res, vres)
-    return {"reply": res.data["reply"] if vres["ok"] else ""}
+    prev = None
+    for attempt in range(2):  # one retry with the validator's feedback, like talk()
+        res = llm.complete("npc_dialogue", ctx, thread_id)
+        vres = validate("npc_dialogue", res.data, ctx)
+        prev = log_call(conn, "npc_dialogue", npc_id, player, thread_id, ctx, res, vres, attempt > 0, prev)
+        if vres["ok"]:
+            return {"reply": res.data["reply"]}
+        if res.data is None and res.error:
+            break
+        ctx = {**ctx, "validator_feedback": vres["errors"]}
+    return {"reply": ""}
 
 
 def _voice(conn, llm, npc, player, situation, fallback) -> str:
