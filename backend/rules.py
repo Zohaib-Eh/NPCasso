@@ -33,6 +33,8 @@ def short_item(itemstring: str) -> str | None:
 def trade_terms(npc_cfg: dict, trust: int, work_block_present: bool = True) -> dict:
     if npc_cfg.get("work_block") and not work_block_present:
         return {"ok": False, "reason": "no_work_block"}
+    if not npc_cfg.get("trade"):
+        return {"ok": False, "reason": "no_trade"}
     b = band(trust)
     if b == "hostile":
         return {"ok": False, "reason": "hostile"}

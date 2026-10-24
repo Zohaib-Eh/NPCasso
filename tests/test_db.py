@@ -9,7 +9,7 @@ def theft(player="w:p"):
 
 def test_schema_and_seed(conn):
     names = {r["id"] for r in conn.execute("select id from npcs")}
-    assert names == {"elise", "rowan", "mira"}
+    assert names == {"elise", "rowan", "mira", "tobin", "wren", "pip", "bram", "nell", "corin", "hazel", "dax", "lottie"}
     assert db.get_trust(conn, "elise", "w:p") == 10
 
 

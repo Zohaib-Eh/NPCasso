@@ -36,3 +36,16 @@ def test_apology_once_per_day():
     assert apology_allowed(None, 3.0)
     assert not apology_allowed(2.5, 3.0)
     assert apology_allowed(2.0, 3.0)
+
+
+def test_no_trade_villager():
+    assert trade_terms(load_config()["npcs"]["pip"], 50) == {"ok": False, "reason": "no_trade"}
+
+
+def test_every_villager_has_one_main_quest_with_known_item():
+    cfg = load_config()
+    for npc_id, npc in cfg["npcs"].items():
+        mains = [q for q in npc["quests"] if q["main"]]
+        assert len(mains) == 1, npc_id
+        assert mains[0]["kind"] == "slay" or mains[0]["item"] in cfg["items"], npc_id
+        assert 0 <= npc["chattiness"] <= 1

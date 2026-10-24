@@ -10,7 +10,11 @@
     "gold_apple": "default:gold_ingot",
     "pickaxe": "default:pick_steel",
     "seeds": "farming:seed_wheat",
-    "hoe": "farming:hoe_wood"
+    "hoe": "farming:hoe_wood",
+    "flour": "farming:flour",
+    "wool": "wool:white",
+    "torch": "default:torch",
+    "iron_ore": "default:iron_lump"
   },
   "deltas": {
     "theft": -30,
@@ -58,6 +62,22 @@
       "expertise": [
         "Apples grow on apple trees and fall when you break the leaves.",
         "A wooden hoe is two planks and two sticks on the crafting grid."
+      ],
+      "chattiness": 0.5,
+      "quests": [
+        {
+          "id": "find_apples",
+          "title": "Find 3 apples for Elise",
+          "kind": "bring",
+          "count": 3,
+          "reward": [
+            "default:steel_ingot 2"
+          ],
+          "xp": 30,
+          "trust": 15,
+          "main": true,
+          "item": "apple"
+        }
       ]
     },
     "rowan": {
@@ -78,13 +98,30 @@
         "give": "pickaxe",
         "count": 1,
         "cost": "iron",
-        "base_price": 3
+        "base_price": 3,
+        "min_level": 2
       },
       "work_block": "cottages:anvil",
       "skin": "character_5.png",
       "expertise": [
         "A stone pickaxe is three cobblestone above two sticks; a steel one needs three iron ingots.",
         "Coal ore sits in stone and fuels any furnace."
+      ],
+      "chattiness": 0.3,
+      "quests": [
+        {
+          "id": "iron_for_rowan",
+          "title": "Bring Rowan 5 iron ingots",
+          "kind": "bring",
+          "count": 5,
+          "reward": [
+            "default:pick_steel"
+          ],
+          "xp": 50,
+          "trust": 15,
+          "main": true,
+          "item": "iron"
+        }
       ]
     },
     "mira": {
@@ -110,6 +147,381 @@
       "expertise": [
         "Sleep in a bed at night to skip to morning.",
         "Everyone in the village talks; what one person sees, the others hear about."
+      ],
+      "chattiness": 0.9,
+      "quests": [
+        {
+          "id": "flowers_for_mira",
+          "title": "Bring Mira 3 roses",
+          "kind": "bring",
+          "count": 3,
+          "reward": [
+            "farming:bread 3"
+          ],
+          "xp": 30,
+          "trust": 15,
+          "main": true,
+          "item": "flower"
+        }
+      ]
+    },
+    "tobin": {
+      "name": "Tobin",
+      "role": "Farmer",
+      "skin": "character_3.png",
+      "chattiness": 0.5,
+      "persona": "Patient and hardworking; measures people by whether they pull their weight.",
+      "background": "Has farmed the south-west field since he was a boy.",
+      "loves": [
+        "wheat"
+      ],
+      "likes": [
+        "bread",
+        "seeds"
+      ],
+      "dislikes": [
+        "coal"
+      ],
+      "trade": {
+        "give": "bread",
+        "count": 3,
+        "cost": "wheat",
+        "base_price": 5
+      },
+      "expertise": [
+        "Wheat grows faster on wet soil next to water.",
+        "Cows and sheep wander the meadows outside the village."
+      ],
+      "quests": [
+        {
+          "id": "wheat_harvest",
+          "title": "Harvest 10 wheat for Tobin",
+          "kind": "bring",
+          "count": 10,
+          "reward": [
+            "farming:bread 5"
+          ],
+          "xp": 40,
+          "trust": 15,
+          "main": true,
+          "item": "wheat"
+        }
+      ]
+    },
+    "wren": {
+      "name": "Wren",
+      "role": "Guard",
+      "skin": "character_6.png",
+      "chattiness": 0.6,
+      "persona": "Stern, dutiful, keeps a mental ledger of every crime; fair to those who help the village.",
+      "background": "Keeps watch from the town hall; lost a brother to monsters years ago.",
+      "loves": [
+        "iron"
+      ],
+      "likes": [
+        "bread",
+        "torch"
+      ],
+      "dislikes": [
+        "flower"
+      ],
+      "trade": {
+        "give": "torch",
+        "count": 8,
+        "cost": "coal",
+        "base_price": 2
+      },
+      "expertise": [
+        "Monsters come out at night outside the village; the village itself is safe.",
+        "Torches keep the dark away."
+      ],
+      "quests": [
+        {
+          "id": "slay_monsters",
+          "title": "Slay 3 monsters for Wren",
+          "kind": "slay",
+          "count": 3,
+          "reward": [
+            "default:sword_steel"
+          ],
+          "xp": 60,
+          "trust": 15,
+          "main": true,
+          "mob": "mobs_monster"
+        }
+      ]
+    },
+    "pip": {
+      "name": "Pip",
+      "role": "Kid",
+      "skin": "character_9.png",
+      "chattiness": 1.0,
+      "persona": "Curious, cheeky, can't keep a secret; loves snacks and adventure stories.",
+      "background": "Runs errands for everyone and hears everything.",
+      "loves": [
+        "apple",
+        "bread"
+      ],
+      "likes": [
+        "flower"
+      ],
+      "dislikes": [
+        "coal"
+      ],
+      "trade": null,
+      "expertise": [
+        "You can find wheat seeds by cutting tall grass.",
+        "Elise's chest is right at the front of her stall."
+      ],
+      "quests": [
+        {
+          "id": "bread_for_pip",
+          "title": "Bring Pip a loaf of bread",
+          "kind": "bring",
+          "count": 1,
+          "reward": [
+            "default:torch 5"
+          ],
+          "xp": 20,
+          "trust": 15,
+          "main": true,
+          "item": "bread"
+        }
+      ]
+    },
+    "bram": {
+      "name": "Bram",
+      "role": "Elder",
+      "skin": "character_1.png",
+      "chattiness": 0.4,
+      "persona": "Wise, measured, values tradition and fairness; speaks for the village.",
+      "background": "The village elder; hosts the Harvest Festival in the town hall.",
+      "loves": [
+        "bread"
+      ],
+      "likes": [
+        "flower",
+        "apple"
+      ],
+      "dislikes": [],
+      "trade": null,
+      "expertise": [
+        "The Harvest Festival decides who belongs in the village; every villager votes.",
+        "Help each villager with their most important task and the festival can begin."
+      ],
+      "quests": [
+        {
+          "id": "village_tour",
+          "title": "Bring Bram 2 loaves for the elders' table",
+          "kind": "bring",
+          "count": 2,
+          "reward": [
+            "default:gold_ingot"
+          ],
+          "xp": 40,
+          "trust": 15,
+          "main": true,
+          "item": "bread"
+        }
+      ]
+    },
+    "nell": {
+      "name": "Nell",
+      "role": "Baker",
+      "skin": "character_7.png",
+      "chattiness": 0.8,
+      "persona": "Warm, motherly, nosy; feeds everyone and knows everyone's business.",
+      "background": "Bakes for the whole village; her bread is famous.",
+      "loves": [
+        "flour"
+      ],
+      "likes": [
+        "wheat",
+        "apple"
+      ],
+      "dislikes": [
+        "coal"
+      ],
+      "trade": {
+        "give": "bread",
+        "count": 2,
+        "cost": "wheat",
+        "base_price": 3
+      },
+      "expertise": [
+        "Flour is ground from wheat on the crafting grid.",
+        "Bread bakes in a furnace."
+      ],
+      "quests": [
+        {
+          "id": "flour_for_nell",
+          "title": "Bring Nell 5 flour",
+          "kind": "bring",
+          "count": 5,
+          "reward": [
+            "farming:bread 6"
+          ],
+          "xp": 40,
+          "trust": 15,
+          "main": true,
+          "item": "flour"
+        }
+      ]
+    },
+    "corin": {
+      "name": "Corin",
+      "role": "Fisher",
+      "skin": "character_4.png",
+      "chattiness": 0.3,
+      "persona": "Quiet, superstitious, patient; distrusts loud people.",
+      "background": "Fishes at the village pond at dawn and dusk.",
+      "loves": [
+        "seeds"
+      ],
+      "likes": [
+        "bread"
+      ],
+      "dislikes": [
+        "torch"
+      ],
+      "trade": null,
+      "expertise": [
+        "The pond is east of the farm.",
+        "Old folk say the dark woods hold worse than wolves."
+      ],
+      "quests": [
+        {
+          "id": "bait_for_corin",
+          "title": "Bring Corin 5 wheat seeds for bait",
+          "kind": "bring",
+          "count": 5,
+          "reward": [
+            "farming:bread 2"
+          ],
+          "xp": 25,
+          "trust": 15,
+          "main": true,
+          "item": "seeds"
+        }
+      ]
+    },
+    "hazel": {
+      "name": "Hazel",
+      "role": "Herbalist",
+      "skin": "character_10.png",
+      "chattiness": 0.5,
+      "persona": "Gentle, thoughtful, speaks softly; believes everyone can mend their ways.",
+      "background": "Grows herbs and tends the sick.",
+      "loves": [
+        "flower"
+      ],
+      "likes": [
+        "seeds",
+        "apple"
+      ],
+      "dislikes": [
+        "iron"
+      ],
+      "trade": null,
+      "expertise": [
+        "Flowers grow wild in the meadows around the village.",
+        "Eating bread or apples restores your strength."
+      ],
+      "quests": [
+        {
+          "id": "herbs_for_hazel",
+          "title": "Bring Hazel 5 roses",
+          "kind": "bring",
+          "count": 5,
+          "reward": [
+            "farming:bread 3"
+          ],
+          "xp": 35,
+          "trust": 15,
+          "main": true,
+          "item": "flower"
+        }
+      ]
+    },
+    "dax": {
+      "name": "Dax",
+      "role": "Miner",
+      "skin": "character_5.png",
+      "chattiness": 0.4,
+      "persona": "Rough, gruff, distrusts newcomers until they prove themselves.",
+      "background": "Digs the hills for coal and iron; sells ore to Rowan.",
+      "loves": [
+        "coal"
+      ],
+      "likes": [
+        "iron",
+        "bread"
+      ],
+      "dislikes": [
+        "flower"
+      ],
+      "trade": {
+        "give": "iron_ore",
+        "count": 2,
+        "cost": "coal",
+        "base_price": 3
+      },
+      "expertise": [
+        "Coal and iron ore are found in stone underground; iron ore is deeper.",
+        "A stone pickaxe mines iron ore."
+      ],
+      "quests": [
+        {
+          "id": "coal_for_dax",
+          "title": "Bring Dax 10 coal",
+          "kind": "bring",
+          "count": 10,
+          "reward": [
+            "default:steel_ingot 3"
+          ],
+          "xp": 45,
+          "trust": 15,
+          "main": true,
+          "item": "coal"
+        }
+      ]
+    },
+    "lottie": {
+      "name": "Lottie",
+      "role": "Shepherd",
+      "skin": "character_8.png",
+      "chattiness": 0.7,
+      "persona": "Cheerful, chatty, adores animals; upset by cruelty.",
+      "background": "Keeps the village sheep in the pen by the meadow.",
+      "loves": [
+        "wool"
+      ],
+      "likes": [
+        "wheat",
+        "apple"
+      ],
+      "dislikes": [
+        "coal"
+      ],
+      "trade": null,
+      "expertise": [
+        "Sheep give wool when sheared.",
+        "Animals follow you if you hold wheat."
+      ],
+      "quests": [
+        {
+          "id": "wool_for_lottie",
+          "title": "Bring Lottie 3 white wool",
+          "kind": "bring",
+          "count": 3,
+          "reward": [
+            "farming:bread 3"
+          ],
+          "xp": 35,
+          "trust": 15,
+          "main": true,
+          "item": "wool"
+        }
       ]
     }
   },
