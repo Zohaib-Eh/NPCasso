@@ -1,0 +1,7 @@
+.superpowers/
+.env
+.venv/
+*.db
+__pycache__/
+eval/results/
+luanti/mods/npcasso/schems_mgv/

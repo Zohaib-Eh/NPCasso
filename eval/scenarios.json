@@ -1,0 +1,96 @@
+[
+  {
+    "id": "theft_witnessed_recall", "npc": "elise",
+    "setup": [{"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": ["elise"]}],
+    "messages": {
+      "train": ["Hello Elise, how's business?", "Got any apples for sale?", "Good morning! Anything new?", "Hi, nice stall you have."],
+      "heldout": ["Hey, what's wrong? You look upset with me.", "Can we talk about yesterday?"]
+    },
+    "expect": {"claims_include": ["theft"], "claim_how": {"theft": "witnessed"}}
+  },
+  {
+    "id": "theft_unwitnessed_unknown", "npc": "elise",
+    "setup": [{"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": []}],
+    "messages": {
+      "train": ["Hello Elise!", "Did anything go missing from your stall?", "You saw me take that apple, right?", "How are the apples today?"],
+      "heldout": ["Bet you didn't notice anything odd today.", {"npc": "rowan", "text": "Heard anything about Elise's apples?"}]
+    },
+    "expect": {"claims_exclude": ["theft"]}
+  },
+  {
+    "id": "gift_remembered", "npc": "elise",
+    "setup": [{"type": "gift", "target": "elise", "details": {"item": "flowers:rose"}, "witnesses": []}],
+    "messages": {
+      "train": ["Hi Elise!", "Did you like what I brought you?", "Good day, merchant.", "How are you today?"],
+      "heldout": ["Remember me?", "Was the rose alright?"]
+    },
+    "expect": {"claims_include": ["gift"]}
+  },
+  {
+    "id": "apology_acknowledged", "npc": "elise",
+    "setup": [{"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": ["elise"]}],
+    "messages": {
+      "train": ["I'm sorry I took your apple.", "Sorry about earlier, that was wrong of me.", "I apologize for stealing from you.", "I'm really sorry, Elise."],
+      "heldout": ["I want to apologise for the apple, it won't happen again.", "Forgive me, I'm sorry for what I did."]
+    },
+    "expect": {"intent": "apology", "claims_include": ["theft"]}
+  },
+  {
+    "id": "no_invented_event", "npc": "elise",
+    "setup": [],
+    "messages": {
+      "train": ["Remember the bread I gave you yesterday?", "Thanks again for the discount you gave me last week.", "You still owe me for the iron I sold you.", "Remember when we went fishing?"],
+      "heldout": ["Did you enjoy the gold I gave you?", {"npc": "mira", "text": "Remember the party you threw for me?"}]
+    },
+    "expect": {"claims_exclude": ["gift", "trade", "theft"]}
+  },
+  {
+    "id": "tone_matches_trust", "npc": "elise",
+    "setup": [
+      {"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": ["elise"]},
+      {"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": ["elise"]}
+    ],
+    "messages": {
+      "train": ["Hi friend!", "Can I get a discount?", "You're my favourite merchant.", "Lovely day, isn't it?"],
+      "heldout": ["Let's be friends, okay?", "Can you trust me with a loan?"]
+    },
+    "expect": {"no_flags": ["tone_mismatch"], "claims_include": ["theft"]}
+  },
+  {
+    "id": "rumour_as_rumour", "npc": "mira",
+    "setup": [{"type": "theft", "target": "elise", "details": {"item": "default:apple"}, "witnesses": ["elise"]}],
+    "gossip": [["elise", "mira", 1.2]],
+    "messages": {
+      "train": ["Evening, Mira! Any news?", "What's the gossip today?", "Heard anything about me?", "Got a room for the night?"],
+      "heldout": ["What are people saying around the village?", {"npc": "rowan", "text": "Anything on your mind, smith?"}]
+    },
+    "expect": {"claims_include": ["theft"], "claim_how": {"theft": "told"}}
+  },
+  {
+    "id": "promise_tracked", "npc": "rowan",
+    "setup": [],
+    "messages": {
+      "train": ["I'll bring you 2 iron tomorrow.", "I promise 3 coal by tomorrow.", "I will bring 1 iron for you soon.", "I'll bring you 4 coal, promise."],
+      "heldout": ["I promise to bring 2 iron before nightfall.", {"npc": "elise", "text": "I'll bring you 1 flower tomorrow."}]
+    },
+    "expect": {"intent": "promise", "db": {"open_promises": 1}}
+  },
+  {
+    "id": "correction_verified", "npc": "elise",
+    "setup": [],
+    "messages": {
+      "train": ["I never gave you bread.", "That's not right, I didn't give you anything.", "I never gave you a flower, you're confusing me with someone.", "I did not give you coal."],
+      "heldout": ["You're wrong, I never gave you any apple.", {"npc": "mira", "text": "I never gave you bread, Mira."}]
+    },
+    "expect": {"intent": "correction", "claims_exclude": ["gift"]}
+  },
+  {
+    "id": "persona_smalltalk", "npc": "elise",
+    "setup": [],
+    "messages": {
+      "train": ["Nice weather today.", "What's your favourite fruit?", "How long have you lived here?", "Tell me about yourself."],
+      "heldout": [{"npc": "rowan", "text": "What are you working on?"}, {"npc": "mira", "text": "How's the inn doing?"}]
+    },
+    "expect": {"claims_exclude": ["theft", "gift", "vandalism", "hit_npc", "trade", "promise_kept", "promise_broken"]}
+  }
+]
