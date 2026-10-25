@@ -4,7 +4,7 @@
 
 NPCasso is a single-player village game for Luanti (the Asuna game plus the `npcasso` mod). You arrive at Bellwether, a village that is short of food, fuel and patience, with winter closing in. Twelve AI villagers live there. A language model speaks for each one, and the game keeps what they remember, how they feel, and what they will do. They judge you for what you do, talk about you when you are not in the room, and answer with moods, prices, refusals, screams and rumours. The plot is dynamic: the model opens the troubles between them, so no two runs are the same. Ten days after you arrive the cold cannot be survived, and what you did until then decides how it ends.
 
-Mubit sits in front of the model and learns the three speaking jobs. The village itself stays in the game.
+Mubit sits in front of the model and learns the three jobs it repeats: `intent_classify` reads what you said, `npc_dialogue` speaks as the villager, and `npc_react` shouts when someone sees what you did. The village itself stays in the game.
 
 ## Contents
 
