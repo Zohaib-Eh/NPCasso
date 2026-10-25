@@ -10,11 +10,12 @@ Mubit sits in front of the model and learns the three speaking jobs. The village
 
 **[Part 1: Technical](#part-1-technical)**: how to set it up and run it
 
-1. [Setup](#setup-windows-powershell): requirements, dependencies, model provider, backend, Luanti, mods, schematics, world, troubleshooting
-2. [Playing](#playing) and [commands](#commands-npcasso-command-server-privilege)
-3. [Mubit](#mubit): what it does, what we send, what the game keeps, the validator, feeding it
-4. [Tools, tests and evaluation](#tools-tests-and-evaluation)
-5. [Project layout](#project-layout)
+1. [Architecture](#architecture): the components, who owns what, and the flow of a conversation and of a witnessed act
+2. [Setup](#setup-windows-powershell): requirements, dependencies, model provider, backend, Luanti, mods, schematics, world, troubleshooting
+3. [Playing](#playing) and [commands](#commands-npcasso-command-server-privilege)
+4. [Mubit](#mubit): what it does, what we send, what the game keeps, the validator, feeding it
+5. [Tools, tests and evaluation](#tools-tests-and-evaluation)
+6. [Project layout](#project-layout)
 
 **[Part 2: The game](#part-2-the-game)**: the idea, the lore, the people and the endings
 
@@ -27,11 +28,125 @@ Mubit sits in front of the model and learns the three speaking jobs. The village
 7. [How the village thinks](#how-the-village-thinks): memory, witnesses, rumours, moods, trust, troubles
 8. [Quests, XP, trade and the Harvest Festival](#quests-xp-trade-and-the-harvest-festival)
 9. [The world, the winter and the sound](#the-world-the-winter-and-the-sound)
-10. [Designed but not built yet](#designed-but-not-built-yet)
+10. [Future prospects](#future-prospects)
 
 ---
 
 # Part 1: Technical
+
+## Architecture
+
+Two programs on your machine talk JSON over HTTP. The Luanti mod sees and hears (it detects acts, decides who witnessed them, shows dialogue, plays sound and dresses the winter). The Python backend holds every rule and every memory, and it is the only part that talks to a model.
+
+```mermaid
+flowchart LR
+    P(["Player"]) --> L
+
+    subgraph L["Luanti 5.17 with Asuna: mod npcasso"]
+        direction TB
+        L1["init.lua<br/>villagers, events, witnesses,<br/>talk and trade windows, commands"]
+        L2["town.lua<br/>village build, quest board,<br/>journal, festival"]
+        L3["life.lua<br/>roaming, moods, gossip,<br/>monsters, border"]
+        L4["finale.lua<br/>the gathering and endings"]
+        L5["atmosphere.lua, sfx.lua<br/>winter look, voices, sound"]
+        L6["hud.lua, radar.lua<br/>feed, XP, clock, character"]
+    end
+
+    L <-->|"JSON over HTTP<br/>127.0.0.1:8000"| A
+
+    subgraph B["Python backend: FastAPI and uvicorn"]
+        direction TB
+        A["app.py<br/>routes: /event /talk /greet /react<br/>/gossip /trade /tick /festival /ending"]
+        G["game.py<br/>events, witnesses, memory,<br/>rumours, quests, talk, festival"]
+        S["stance.py<br/>mood toward the player"]
+        SI["situations.py<br/>troubles between villagers"]
+        ST["story.py, finale.py<br/>winter clock, 12 traits,<br/>5 endings"]
+        R["rules.py, progress.py<br/>trust table, prices, XP"]
+        V["validator.py<br/>checks every reply"]
+        LLM["llm.py<br/>3 fixed prompts, 4 providers"]
+        DB[("SQLite<br/>npcasso.db")]
+        A --> G
+        G --> S
+        G --> SI
+        G --> ST
+        G --> R
+        G --> V
+        G --> LLM
+        G <--> DB
+        S --> DB
+        SI --> DB
+        ST --> DB
+    end
+
+    LLM -->|"mock"| M["MockLLM<br/>offline, scripted"]
+    LLM -->|"local"| O["Ollama or any<br/>OpenAI-compatible server"]
+    LLM -->|"claude"| C["Anthropic API"]
+    LLM -->|"mubit"| MB["Mubit proxy<br/>records and files each call<br/>by task prompt"]
+    MB --> MODEL["Model<br/>gpt-6-luna"]
+    MB -.->|"25 kept examples per task"| AD["Task adapters<br/>compared in Try models"]
+```
+
+**Who owns what**
+
+| Owner | Decides | Never does |
+|---|---|---|
+| Luanti mod | Who saw or heard an act (distance, line of sight, facing), what the player sees and hears, how villagers move | Keep a rule or a memory |
+| Backend game code | Trust, prices, moods, who spreads a rumour, quests, XP, the winter clock, the score and the ending | Write a villager's words |
+| Model (through Mubit) | The words: a reply, a greeting, a rumour line, a shout, an ending line, and which sentence is a threat, apology, insult or promise | Change a fact. A reply that invents a past event is rejected and retried. |
+| SQLite | Events, memories, promises, quests, situations, evidence, story clock, every logged model call | |
+
+**One conversation turn**
+
+```mermaid
+sequenceDiagram
+    actor P as Player
+    participant L as Luanti mod
+    participant B as Backend game code
+    participant D as SQLite
+    participant M as Model via Mubit
+
+    P->>L: right-click a villager, type a line
+    L->>B: POST /talk
+    opt not a plain question or hello
+        B->>M: intent_classify
+        M-->>B: intent and confidence
+        B->>D: threat, insult, apology, promise or correction changes trust or records the promise
+    end
+    B->>D: read memories, trust band, mood, season, open troubles
+    B->>M: npc_dialogue with a fresh snapshot
+    M-->>B: reply, claims, evidence
+    B->>B: validator checks claims against the event log and the mood
+    alt check fails
+        B->>M: npc_dialogue again with the mistake as feedback
+        M-->>B: second reply
+    end
+    B->>D: store the exchange, evidence, quest offer, trouble
+    B-->>L: reply, notices, XP, quest offer
+    L-->>P: text and voice blips
+    Note over L,B: Every 30 s the mod also calls POST /tick. The backend answers with the day, the cold, the winter value and any gathering, and the mod eases the sky to match.
+```
+
+**One act that others see** (a theft, a hit, a gift)
+
+```mermaid
+sequenceDiagram
+    actor P as Player
+    participant L as Luanti mod
+    participant B as Backend game code
+    participant D as SQLite
+    participant M as Model via Mubit
+
+    P->>L: takes an apple from Elise's crate
+    L->>L: who is close, in line of sight and facing it
+    L->>B: POST /event with the witnesses
+    B->>D: write the event, a memory and a trust change for each who knows
+    B-->>L: notices, which villagers will react, the scene for a hit
+    L->>B: POST /react for up to two speakers
+    B->>M: npc_react for each
+    M-->>B: shout
+    B-->>L: shouts, shown as bubbles with scream and gasp
+    Note over B,D: Later, when two villagers meet, a rumour may carry the deed on. No model call unless the player can hear it.
+```
 
 ## Setup (Windows, PowerShell)
 
@@ -354,8 +469,6 @@ Each villager has a work, a history, a temper and a lean:
 
 That lean shifts with how you treat them. Over the days the model also opens **troubles between villagers**, each with a reason of its own: a debt, a secret kept from someone, a shortage that sets two people against each other. The game stores the trouble, so the village remembers it and the model cannot rewrite it. You can help, hide, exploit or walk past. Each of those is remembered.
 
-The vision documents describe a larger story (a priest who warns that terrible things happened here and are forgotten, and an ancient book, the Palimpsest, made to soften memories and used to erase inconvenient truths). That layer is [designed but not built yet](#designed-but-not-built-yet). What is built is the village, the people, the winter and the five endings.
-
 ## How a run goes
 
 Days count from the moment you arrive, so an old world never starts frozen. The clock shows the day and the time of day. It never names a stage and never announces a threshold.
@@ -555,11 +668,6 @@ When a villager is free (none open, a cooldown since their last, a gap since any
 - **Music:** Asuna's own ambient tracks.
 - **Source:** all sounds are synthesised by `tools/make_sounds.py` into mono Ogg Vorbis (Luanti plays only that).
 
-## Designed but not built yet
+## Future prospects
 
-The core vision (`docs/superpowers/specs/2026-10-24-npcasso-core-vision-design.md`) describes more than the game does today:
-
-- **The priest and the Palimpsest.** A priest who warns that terrible things happened here and are forgotten, and an ancient book in the town hall that was made to soften unbearable memories and used to erase inconvenient truths. It would end the game through a special sixth ending. Neither is in the code.
-- **A generated first unease.** A small unexplained detail the model invents soon after you enter, different every run. Today the early signs are the fixed per-villager winter signs, and the troubles the model opens from day 2.
-- **Winter stores and rationing**, and a **routines and ties** layer for villagers (later slices of the social design).
-- **Calling a trained adapter from the game.** Mubit has no route for that yet, so adapters are compared in the console only.
+**Winter stores and rationing.** The village would keep a shared store of food and fuel that the winter draws down. Villagers would ration it, and the player's choices (hoarding, sharing, trading, stealing) would change who goes without. Shortages would then feed the troubles between villagers and the endings, the same way trust does today.
