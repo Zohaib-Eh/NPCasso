@@ -6,6 +6,8 @@ NPCasso is a single-player village game for Luanti (the Asuna game plus the `npc
 
 Mubit sits in front of the model and learns the three jobs it repeats: `intent_classify` reads what you said, `npc_dialogue` speaks as the villager, and `npc_react` shouts when someone sees what you did. The village itself stays in the game.
 
+[Watch the demo](npcasso-demo.mp4)
+
 ## Contents
 
 1. [Architecture](#architecture): the components, who owns what, and the flow of a conversation and of a witnessed act
