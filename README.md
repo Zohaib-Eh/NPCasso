@@ -183,6 +183,13 @@ The backend retries once with the mistake as feedback. Every catch is logged.
 
 The instructions never change. Only the villager, the memories and the player's sentence change, so the same three jobs repeat all game. Mubit learns those jobs from the calls made in play, while the game keeps memory, trust, prices and endings consistent. You pay the big model for the lines someone hears, and the silent life of the village stays in the database.
 
+### Adapters so far
+
+Each adapter is a 4B model trained on one of the three jobs. When it is close enough to the big model, that job can be answered by the small model, so the repeated lines, greetings and shouts are no longer billed at `gpt-6-luna`'s price. The game still takes the big model's reply. These three were trained overnight on Qwen3-4B-Instruct:
+
+<img src="image.png" alt="Classify player's chat message adapter, 66.7% quality" width="240">
+<img src="image-1.png" alt="Voice one villager 10 adapter, 16.7% quality" width="240">
+<img src="image-2.png" alt="Voice one villager 17 adapter, 4.2% quality" width="240">
 ---
 
 # The game
